@@ -1,6 +1,6 @@
 open preamble word_to_wordTheory wordSemTheory word_simpProofTheory
      wordPropsTheory word_allocProofTheory word_instProofTheory
-     word_removeProofTheory;
+     word_removeProofTheory word_cseProofTheory;
 
 val good_dimindex_def = labPropsTheory.good_dimindex_def;
 
@@ -35,11 +35,12 @@ val compile_single_lem = Q.store_thm("compile_single_lem",`
   full_simp_tac(srw_ss())[compile_single_def,LET_DEF]>>srw_tac[][]>>
   qpat_abbrev_tac`p1 = inst_select A B C`>>
   qpat_abbrev_tac`p2 = full_ssa_cc_trans n p1`>>
+  qpat_abbrev_tac`p3 = FST (remove_dead p2 LN)`>>
   TRY(
-    qpat_abbrev_tac`p3 = FST (remove_dead p2 LN)`>>
-    qpat_abbrev_tac`p4 = three_to_two_reg p3`)>>
-  TRY(qpat_abbrev_tac`p4 = FST (remove_dead p2 LN)`)>>
-  Q.ISPECL_THEN [`c`,`a`,`p4`,`k`,`col`,`st`] mp_tac word_alloc_correct>>
+    qpat_abbrev_tac`p4 = cse p3`>>
+    qpat_abbrev_tac`p5 = three_to_two_reg p4`)>>
+  TRY(qpat_abbrev_tac`p5 = cse p3`)>>
+  Q.ISPECL_THEN [`c`,`a`,`p5`,`k`,`col`,`st`] mp_tac word_alloc_correct>>
   (impl_tac>-
       (full_simp_tac(srw_ss())[even_starting_locals_def]>>
       srw_tac[][word_allocTheory.even_list_def,MEM_GENLIST,reg_allocTheory.is_phy_var_def]
@@ -48,6 +49,7 @@ val compile_single_lem = Q.store_thm("compile_single_lem",`
       >>
         unabbrev_all_tac>>fs[full_ssa_cc_trans_wf_cutsets]>>
         TRY(ho_match_mp_tac three_to_two_reg_wf_cutsets)>>
+        match_mp_tac cse_wf_cutsets>>
         match_mp_tac (el 5 rmd_thms)>>
         fs[full_ssa_cc_trans_wf_cutsets]))>>
   rw[]>>
@@ -73,13 +75,17 @@ val compile_single_lem = Q.store_thm("compile_single_lem",`
   Cases_on`remove_dead p2 LN`>>fs[]>>
   Q.ISPECL_THEN [`p2`,`LN:num_set`,`q`,`r`,`st with permute := perm'`,`st.locals`,`res'`,`rcst`] mp_tac evaluate_remove_dead>>
   impl_tac>>fs[strong_locals_rel_def]>>
+  strip_tac>>
+  Q.ISPECL_THEN [`p3`, `st with permute := perm'`] mp_tac evaluate_cse>>
+  rev_full_simp_tac(srw_ss())[LET_THM]>>
+  pairarg_tac>>fs[]>>
   strip_tac
   >-
-    (Q.ISPECL_THEN[`p3`,`st with permute:=perm'`,`res'`,`rcst with locals:=t'`] mp_tac three_to_two_reg_correct>>
+    (Q.ISPECL_THEN[`p4`,`st with permute:=perm'`,`res'`,`rcst'`] mp_tac three_to_two_reg_correct>>
     impl_tac>-
       (rev_full_simp_tac(srw_ss())[]>>
       unabbrev_all_tac>>rpt var_eq_tac >> fs[]>>
-      metis_tac[full_ssa_cc_trans_distinct_tar_reg,el 4 rmd_thms,FST,PAIR])>>
+      metis_tac[full_ssa_cc_trans_distinct_tar_reg,el 4 rmd_thms,FST,PAIR,cse_distinct_tar_reg])>>
     srw_tac[][]>>
     full_simp_tac(srw_ss())[word_state_eq_rel_def]>>
     Cases_on`res`>>full_simp_tac(srw_ss())[])
@@ -589,7 +595,7 @@ val compile_conventions = Q.store_thm("compile_to_word_conventions",`
     fs[compile_single_def]>>
     fs[GSYM (el 5 rmt_thms),GSYM word_alloc_lab_pres]>>
     IF_CASES_TAC>>
-    fs[GSYM three_to_two_reg_lab_pres,GSYM full_ssa_cc_trans_lab_pres,GSYM inst_select_lab_pres,GSYM (el 6 rmd_thms)])>>
+    fs[GSYM cse_extract_labels,GSYM three_to_two_reg_lab_pres,GSYM full_ssa_cc_trans_lab_pres,GSYM inst_select_lab_pres,GSYM (el 6 rmd_thms)])>>
   fs[EVERY_MAP,EVERY_MEM,MEM_ZIP,FORALL_PROD]>>rw[]>>
   fs[full_compile_single_def,compile_single_def]>>
   CONJ_TAC>-
@@ -597,6 +603,7 @@ val compile_conventions = Q.store_thm("compile_to_word_conventions",`
     match_mp_tac word_alloc_flat_exp_conventions>>
     IF_CASES_TAC>>
     TRY(match_mp_tac three_to_two_reg_flat_exp_conventions)>>
+    match_mp_tac cse_flat_exp_conventions >>
     match_mp_tac (el 1 rmd_thms)>>
     match_mp_tac full_ssa_cc_trans_flat_exp_conventions>>
     fs[inst_select_flat_exp_conventions])>>
@@ -605,12 +612,14 @@ val compile_conventions = Q.store_thm("compile_to_word_conventions",`
     match_mp_tac pre_post_conventions_word_alloc>>
     IF_CASES_TAC>>
     TRY(match_mp_tac three_to_two_reg_pre_alloc_conventions)>>
+    match_mp_tac cse_pre_alloc_conventions>>
     match_mp_tac (el 3 rmd_thms)>>
     fs[full_ssa_cc_trans_pre_alloc_conventions])>>
   CONJ_TAC>-
     (rw[]>>match_mp_tac (el 2 rmt_thms)>>
     match_mp_tac word_alloc_full_inst_ok_less>>
     TRY(match_mp_tac three_to_two_reg_full_inst_ok_less)>>
+    match_mp_tac cse_full_inst_ok_less>>
     match_mp_tac (el 2 rmd_thms)>>
     match_mp_tac full_ssa_cc_trans_full_inst_ok_less>>
     match_mp_tac inst_select_full_inst_ok_less>>

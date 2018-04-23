@@ -298,8 +298,9 @@ val to_livesets_def = Define`
     let inst_prog = inst_select asm_conf maxv prog in
     let ssa_prog = full_ssa_cc_trans arg_count inst_prog in
     let rm_prog = FST(remove_dead ssa_prog LN) in
-    let prog = if two_reg_arith then three_to_two_reg rm_prog
-                                else rm_prog in
+    let cse_prog = cse rm_prog in
+    let prog = if two_reg_arith then three_to_two_reg cse_prog
+                                else cse_prog in
      (name_num,arg_count,prog)) p in
   let clashmovforce = MAP (\(name_num,arg_count,prog). (get_clash_tree prog),get_prefs prog [],get_forced c.lab_conf.asm_conf prog []) p in
   ((reg_count,clashmovforce),c,p)`
