@@ -99,7 +99,7 @@ val assign_nums_def = Define `
  * modify state, eg. dst and src have same VN
  *)
 val get_moves_def = Define `
-  get_moves moves nums =
+  get_moves (moves : (num,num) alist) nums =
     ZIP (MAP FST moves, get_nums (MAP SND moves) nums)`;
 
 val redun_move_def = Define `
@@ -113,7 +113,7 @@ val redun_move_def = Define `
       else redun_move xs ((dst,src)::acc) nums)`;
 
 val cse_move_def = Define `
-  cse_move pri moves nums =
+  cse_move pri moves nums : (α prog # α vnumbering) =
     let
       nmoves = redun_move moves [] nums;
       nnums = assign_nums (get_moves moves nums) nums
@@ -169,10 +169,10 @@ val inter_uses_def = Define `
     case lookup n nums.vnodes of
       | SOME node => inter node.uses (inter_uses xs nums)
       | NONE => LN) ∧ 
-  (inter_uses _ nums = LN)`;
+  (inter_uses (vn :α vnumber list) (nums :α vnumbering) = LN)`;
 
 val attempt_match_def = Define`
-  attempt_match lbl vns nums =
+  attempt_match lbl vns (nums :α vnumbering) :α vnumber option =
     let
       uses = MAP FST (toAList (inter_uses vns nums));
       f = compare_exp lbl vns nums;
@@ -189,7 +189,7 @@ val find_exp_def = Define `
  * Generate either a move, const or skip depending on the situation
  *)
 val gen_move_def = Define `
-  (gen_move dst (VN n) nums =
+  (gen_move dst ((VN n) : α vnumber) (nums : α vnumbering) =
     case lookup n nums.vnodes of
       | SOME node =>
           (case toAList node.held of
@@ -217,7 +217,7 @@ val redun_exp_def = Define `
  * The node is added with its uses and operands. These won't be modified again.
  *)
 val add_uses_def = Define `
-  (add_uses use ((VN vn)::vns) nums =
+  (add_uses use (((VN vn) :α vnumber)::vns) (nums : α vnumbering) =
     add_uses use vns (nums with vnodes updated_by (insert_use use vn))) ∧
   (add_uses use (x::vns) nums = add_uses use vns nums) ∧
   (add_uses use [] nums = nums)`;
@@ -297,7 +297,7 @@ val cse_fp_def = Define `
     (Inst (FP (FPMovToReg r1 r2 d)),
       if dimindex(:'a) = 64 then unassign_num r1 nums
       else unassign_num r2 (unassign_num r1 nums))) ∧
-  (cse_fp fp nums = (Inst (FP fp), nums))`;
+  (cse_fp fp (nums :α vnumbering) = (Inst (FP fp) :α prog, nums))`;
 
 (*
  * memory instructions
@@ -305,7 +305,8 @@ val cse_fp_def = Define `
 val cse_mem_def = Define `
   (cse_mem Load r a nums = (Inst (Mem Load r a), unassign_num r nums)) /\
   (cse_mem Load8 r a nums = (Inst (Mem Load8 r a), unassign_num r nums)) /\
-  (cse_mem memop r a nums = (Inst (Mem memop r a), nums))`;
+  (cse_mem memop r a (nums :α vnumbering) =
+    (Inst (Mem memop r a) :α prog, nums))`;
 
 val cse_inst_def = Define `
   (cse_inst asm$Skip nums = (Inst (Skip), nums)) ∧
@@ -320,17 +321,19 @@ val cse_inst_def = Define `
  * there should be none after inst sel, so just maintain correctness
  *)
 val cse_assign_def = Define `
-  cse_assign dst exp nums =
-    (wordLang$Assign dst exp, unassign_num dst nums)`;
+  cse_assign dst exp (nums :α vnumbering) =
+    (wordLang$Assign dst exp :α prog, unassign_num dst nums)`;
 
 val cse_get_def = Define `
-  cse_get dst name nums = (Get dst name, unassign_num dst nums)`;
+  cse_get dst name (nums :α vnumbering) =
+    (Get dst name :α prog, unassign_num dst nums)`;
 
 (* logic for merging vnums at a join *)
 (* TODO: actually perform a merge of some sort *)
 (* TODO: Pruning of value graph *)
 val merge_vnums_def = Define `
-  merge_vnums vnums1 vnums2 = initial_vn`;
+  merge_vnums (vnums1 :α vnumbering) (vnums2 :α vnumbering) :α vnumbering =
+    initial_vn`;
 
 val cse_loop_def = Define `
   (* operations updating state *)

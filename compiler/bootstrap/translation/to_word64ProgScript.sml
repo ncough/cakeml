@@ -484,11 +484,15 @@ val _ = save_thm ("comp_ind",data_to_wordTheory.comp_ind|> conv64|> wcomp_simp)
 (* Inlines the let k = 8 manually *)
 val _ = translate (comp_def |> conv64 |> wcomp_simp |> conv64 |> SIMP_RULE std_ss[LET_THM |> INST_TYPE [alpha|->``:num``]]);
 
-open word_simpTheory word_allocTheory word_instTheory
+open word_cseTheory
+
+val _ = translate MAP;
+val _ = translate ZIP_def;
+val _ = translate FILTER;
+val _ = translate FST;
+val _ = translate SND;
 
 val _ = matches:= [``foo:'a wordLang$prog``,``foo:'a wordLang$exp``,``foo:'a word``,``foo: 'a reg_imm``,``foo:'a arith``,``foo: 'a addr``]
-
-val _ = translate (const_fp_inst_cs_def |> spec64 |> econv)
 
 val rws = Q.prove(`
   ($+ = λx y. x + y) ∧
@@ -496,8 +500,54 @@ val rws = Q.prove(`
   ($|| = λx y. x || y) ∧
   ($?? = λx y. x ?? y)`,
   fs[FUN_EQ_THM])
-
 val _ = translate (wordLangTheory.word_op_def |> ONCE_REWRITE_RULE [rws,WORD_NOT_0] |> spec64 |> gconv)
+
+val suc_fupd = Q.prove(`
+  nums with <| next updated_by SUC |> =
+  nums with <| next := (nums.next + 1) |>`,
+  fs [vnumbering_component_equality]);
+
+val _ = translate (initial_vn_def |> conv64);
+val _ = translate (delete_held_def |> conv64);
+val _ = translate (insert_held_def |> conv64);
+val _ = translate (insert_use_def |> conv64);
+val _ = translate (get_num_def |> conv64);
+val _ = translate (get_nums_def |> conv64);
+val _ = translate (unassign_num_def |> conv64);
+val _ = translate (assign_num_def |> conv64);
+val _ = translate (assign_nums_def |> conv64);
+val _ = translate (get_moves_def |> conv64);
+val _ = translate (redun_move_def |> conv64);
+val _ = translate (cse_move_def |> conv64);
+val _ = translate (all_const_def |> conv64);
+val _ = translate (fold_def |> conv64);
+val _ = translate (attempt_fold_def |> conv64);
+val _ = translate (compare_exp_def |> conv64);
+val _ = translate (inter_uses_def |> conv64);
+val _ = translate (attempt_match_def |> conv64);
+val _ = translate (find_exp_def |> conv64);
+val _ = translate (gen_move_def |> conv64);
+val _ = translate (gen_prog_def |> conv64);
+val _ = translate (redun_exp_def |> conv64);
+val _ = translate (add_uses_def |> conv64);
+val _ = translate (add_empty_vnode_def |> RW[suc_fupd] |> conv64 |> econv);
+val _ = translate (add_vnode_def |> conv64);
+val _ = translate (get_or_assign_num_def |> conv64);
+val _ = translate (get_or_assign_nums_def |> conv64);
+val _ = translate (cse_binop_def |> conv64);
+val _ = translate (cse_arith_def |> conv64);
+val _ = translate (cse_fp_def |> conv64);
+val _ = translate (cse_mem_def |> conv64);
+val _ = translate (cse_inst_def |> conv64);
+val _ = translate (cse_assign_def |> conv64);
+val _ = translate (cse_get_def |> conv64);
+val _ = translate (merge_vnums_def |> conv64);
+val _ = translate (cse_loop_def |> conv64);
+val _ = translate (cse_def |> conv64);
+
+open word_simpTheory word_allocTheory word_instTheory
+
+val _ = translate (const_fp_inst_cs_def |> spec64 |> econv)
 
 val word_msb_rw = Q.prove(
   `word_msb (a:word64) ⇔ (a>>>63) <> 0w`,
