@@ -1969,7 +1969,14 @@ val evaluate_cse_loop = Q.store_thm("evaluate_cse_loop", `
     >> fs[add_ret_loc_def] >> TOP_CASE_TAC >- fs[]
     >> TOP_CASE_TAC >- fs[] >> PairCases_on `x'` >> fs[]
     >> TOP_CASE_TAC >- fs[] >> TOP_CASE_TAC >- fs[]
-    >> `cut_env x1 loc = SOME x'` by cheat
+    >> `∀x. x ∈ domain x1 ⇒ lookup x st.locals = lookup x loc` by (
+         fs[every_var_def,every_name_def] >> imp_res_tac EVERY_MEM
+         >> fs[domain_lookup,MEM_MAP] >> rw[]
+         >> metis_tac[locals_rel_def,MEM_toAList,FST])
+    >> `cut_env x1 loc = SOME x'` by (
+         fs[cut_env_def,SUBSET_DEF,domain_lookup] >> rw[lookup_inter]
+         >> full_case_tac >> fs[] >> full_case_tac >> fs[]
+         >> full_case_tac >> fs[])
     >> fs[] >> TOP_CASE_TAC >- rw[call_env_def]
     >> fs [call_env_def,push_env_def,dec_clock_def] >> pairs_tac
     >> qpat_x_assum `_ = (cres,rcst)` mp_tac
