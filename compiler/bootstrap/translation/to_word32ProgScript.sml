@@ -489,12 +489,6 @@ val _ = translate (comp_def |> conv32 |> wcomp_simp |> conv32 |> SIMP_RULE std_s
 
 open word_cseTheory
 
-val _ = translate MAP;
-val _ = translate ZIP_def;
-val _ = translate FILTER;
-val _ = translate FST;
-val _ = translate SND;
-
 val _ = matches:= [``foo:'a wordLang$prog``,``foo:'a wordLang$exp``,``foo:'a word``,``foo: 'a reg_imm``,``foo:'a arith``,``foo: 'a addr``]
 
 val rws = Q.prove(`
@@ -551,7 +545,7 @@ val _ = translate (cse_def |> conv32);
 
 open word_simpTheory word_allocTheory word_instTheory
 
-val _ = translate (const_fp_inst_cs_def |> spec64 |> econv)
+val _ = translate (const_fp_inst_cs_def |> spec32 |> econv)
 
 val word_msb_rw = Q.prove(
   `word_msb (a:word32) ⇔ (a>>>31) <> 0w`,
