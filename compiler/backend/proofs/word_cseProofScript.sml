@@ -54,6 +54,12 @@ val option_seq_append = Q.store_thm("option_seq_append",
   Induct >> fs[option_seq_def,option_case_eq]
   >> rw[] >> EQ_TAC >> rw[]);
 
+val option_seq_some = Q.prove(`
+  ∀l x.
+  option_seq l = SOME x ⇒ EVERY (\v. IS_SOME(v)) l`,
+  Induct >> fs[option_seq_def,case_eq,IS_SOME_EXISTS]
+  >> metis_tac[]);
+
 (* MIN_SET *)
 val min_in_thm = Q.store_thm("min_in",
   `!s. s <> {} ==> (MIN_SET s) IN s`,
@@ -102,6 +108,24 @@ val the_words_split = Q.prove(`
     n = SOME (Word w2) ∧ m = SOME (Word w3) ∧ ws = [w2; w3]`,
   rw[the_words_def,case_eq]);
 
+val get_vars_every = Q.prove(`
+  ∀vars st res.
+  get_vars vars st = SOME res ⇒
+  EVERY (λv. IS_SOME (get_var v st)) vars`,
+  Induct >> fs[get_vars_def,case_eq] >> metis_tac[IS_SOME_EXISTS]);
+
+val get_vars_the_words = Q.prove(`
+  ∀vars st ws.
+  the_words (MAP (λv. get_var v st) vars) = SOME ws ⇔
+  get_vars vars st = SOME (MAP Word ws)`,
+  Induct >> fs[get_vars_def,the_words_def,case_eq]
+  >- metis_tac[]
+  >> Cases_on `get_var h st` >> fs[]
+  >> Cases_on `x` >> fs[]
+  >> Cases_on `get_vars vars st` >> fs[]
+  >> Cases_on `ws` >> fs[]
+  >> metis_tac[]);
+
 (*
  * Wrappers fpr value node properties with default values
  *)
@@ -142,9 +166,8 @@ val get_any_def = Define `
     if t = {} then NONE else get_var (MIN_SET t) s`;
 
 val eval_label_def = Define `
-  (eval_label (VOp op) ws =
-    OPTION_MAP Word (OPTION_BIND (the_words (MAP SOME ws)) (word_op op))) ∧
-  (eval_label label ws = NONE)`;
+  eval_label lbl ws =
+    OPTION_MAP Word (OPTION_BIND (the_words (MAP SOME ws)) (fold lbl))`;
 
 (*
  * A value number can be evaluated either by accessing a var in its
@@ -419,6 +442,13 @@ val get_any_delete_thm = Q.store_thm("get_any_delete",
   >> `MIN_SET (held vn nums) IN held vn nums` by metis_tac [min_in_thm]
   >> metis_tac [cse_state_rel_def, wf_nums_def, eq_nums_eq_vars]);
 
+val get_any_cases_thm = Q.prove(`
+  ∀d s z x st.
+  get_any (d INSERT s) (set_var d z st) = SOME x ⇒
+  get_any s st = SOME x \/ z = x`, 
+  rw[get_any_def,get_var_set_var_thm] >> Cases_on `s` >> fs[]
+  >> metis_tac[min_insert_thm,min_only_thm]);
+
 val get_any_insert_thm = Q.store_thm("get_any_insert",
   `∀vn var res1 res2 nums s.
     wf_nums nums ∧ cse_state_rel nums s ∧
@@ -534,7 +564,7 @@ val absorption_insert_held_thm = Q.store_thm("absorption_insert_held",
   >> metis_tac [ABSORPTION]);
 
 (* unassign_num thms *)
-val get_num_unassign_thm = Q.store_thm("get_num_unassign[simp]",
+val get_num_unassign_thm = Q.store_thm("get_num_unassign",
   `∀var1 var2 nums.
     get_num var1 (unassign_num var2 nums) =
     if var1 = var2 then NONE else get_num var1 nums`,
@@ -555,27 +585,24 @@ val held_unassign_thm = Q.store_thm("held_unassign",
   >> drule_then (lt simp) delete_held_thm 
   >> CASE_TAC >> fs [absorption_delete_held_thm]));
 
-val uses_unassign_thm = Q.store_thm("uses_unassign",
-  `∀var vn nums.
-    uses vn (unassign_num var nums) = uses vn nums`,
+val uses_unassign_thm = Q.store_thm("uses_unassign",`
+  ∀var vn nums.
+  uses vn (unassign_num var nums) = uses vn nums`,
   rw [unassign_num_def] >> every_case_tac
-  >- fs [vnumbering_component_equality, uses_def]
   >- fs [vnumbering_component_equality, uses_def]
   >> irule uses_delete_held_thm >> rw [] >> metis_tac []);
 
-val operands_unassign_thm = Q.store_thm("operands_unassign",
-  `∀var vn nums.
-    operands vn (unassign_num var nums) = operands vn nums`,
+val operands_unassign_thm = Q.store_thm("operands_unassign",`
+  ∀var vn nums.
+  operands vn (unassign_num var nums) = operands vn nums`,
   rw [unassign_num_def] >> every_case_tac
-  >- fs [vnumbering_component_equality, operands_def]
   >- fs [vnumbering_component_equality, operands_def]
   >> irule operands_delete_held_thm >> rw [] >> metis_tac []);
 
-val label_unassign_thm = Q.store_thm("label_unassign",
-  `∀var vn nums.  
-    label vn (unassign_num var nums) = label vn nums`,
+val label_unassign_thm = Q.store_thm("label_unassign",`
+  ∀var vn nums.  
+  label vn (unassign_num var nums) = label vn nums`,
   rw [unassign_num_def] >> every_case_tac
-  >- fs [vnumbering_component_equality, label_def]
   >- fs [vnumbering_component_equality, label_def]
   >> irule label_delete_held_thm >> rw [] >> metis_tac []);
 
@@ -657,7 +684,7 @@ val invariant_unassign_thm = Q.prove(`
     (insert dst x loc)`,
   rw[cse_invariant_def,cse_locals_rel_def,locals_rel_def]
   >> fs[wf_unassign_thm,state_unassign_thm]
-  >> fs[lookup_insert,set_var_def]
+  >> fs[lookup_insert,set_var_def,get_num_unassign_thm]
   >> metis_tac[NOT_NONE_SOME,IS_SOME_EXISTS]);
 
 (* assign_num thms *)
@@ -702,8 +729,9 @@ val uses_assign_thm = Q.store_thm("uses_assign",
   >> fs [insert_held_def] >> CASE_TAC
   >- metis_tac [uses_def, uses_unassign_thm]
   >> fs [lookup_insert] >> Cases_on `vn = n` >> fs []
-  >- (qspecl_then [`var`, `n`, `nums`] assume_tac uses_unassign_thm
-     >> rfs [uses_def])
+  >- (
+    qspecl_then [`var`, `n`, `nums`] mp_tac uses_unassign_thm
+    >> FULL_SIMP_TAC std_ss [uses_def])
   >> metis_tac [uses_def, uses_unassign_thm]);
 
 val operands_assign_thm = Q.store_thm("operands_assign",
@@ -715,7 +743,7 @@ val operands_assign_thm = Q.store_thm("operands_assign",
   >- metis_tac [operands_def, operands_unassign_thm]
   >> fs [lookup_insert] >> Cases_on `vn = n` >> fs []
   >- (qspecl_then [`var`, `n`, `nums`] assume_tac operands_unassign_thm
-     >> rfs [operands_def])
+     >> FULL_SIMP_TAC std_ss [operands_def] >> rfs[])
   >- metis_tac [operands_def, operands_unassign_thm]);
 
 val label_assign_thm = Q.store_thm("label_assign",
@@ -727,14 +755,13 @@ val label_assign_thm = Q.store_thm("label_assign",
   >- metis_tac [label_def, label_unassign_thm]
   >> fs [lookup_insert] >> Cases_on `vn = n` >> fs []
   >- (qspecl_then [`var`, `vn`, `nums`] assume_tac label_unassign_thm
-     >> rfs [label_def])
+     >> FULL_SIMP_TAC std_ss [label_def] >> rfs[])
   >- metis_tac [label_def, label_unassign_thm]);
 
 val domain_assign_thm = Q.store_thm("domain_assign",
   `∀var vnum vn nums.
     domain (assign_num var vnum nums).vnodes = domain nums.vnodes`,
   Cases_on `vnum` >> rw [assign_num_def]
-  >- fs [domain_unassign_thm]
   >> fs [vnumbering_component_equality, insert_held_def]
   >> every_case_tac
   >> metis_tac [ABSORPTION, domain_lookup, domain_insert, domain_unassign_thm]);
@@ -767,11 +794,17 @@ val wf_assign_thm = Q.store_thm("wf_assign",
 
 val eval_vn_valid_thm = Q.store_thm("eval_vn_valid",
   `∀vnum nums s res.
-    eval_vn vnum nums s = SOME res ⇒
-    valid vnum nums`,
+    eval_vn vnum nums s = SOME res ⇒ valid vnum nums`,
   rw [] >> Cases_on `vnum`
   >> fs [valid_def, eval_vn_def, get_any_def, held_def, label_def]
-  >> every_case_tac >> fs [domain_lookup, eval_label_def]);
+  >> every_case_tac >> fs [domain_lookup, eval_label_def, fold_def]);
+
+val eval_vns_valid_thm = Q.prove(`
+  ∀ops nums st x.
+  option_seq (MAP (λv. eval_vn v nums st) ops) = SOME x ⇒
+  EVERY (λp. valid p nums) ops`,
+  Induct >> rw [option_seq_def, option_case_eq]
+  >> metis_tac [eval_vn_valid_thm]);
 
 val eval_vn_assign_thm = Q.store_thm("eval_vn_assign",
   `∀vnum1 res1 var vnum2 nums s res2.
@@ -819,6 +852,59 @@ val state_assign_thm = Q.store_thm("state_assign",
   >-
   (fs [get_num_assign_thm, get_var_set_var_thm] >>  rw []
   >> fs [cse_state_rel_def, eval_var_def]));
+
+val invariant_assign_thm = Q.prove(`
+  ∀rloc dst vn res temp nums st loc.
+  cse_invariant temp nums st loc ∧
+  dst < temp ∧
+  eval_vn vn nums st = SOME res ∧
+  locals_rel temp (insert dst res loc) rloc ⇒
+  cse_invariant temp (assign_num dst vn nums) (set_var dst res st) rloc`,
+  rw[cse_invariant_def,cse_locals_rel_def,locals_rel_def]
+  >- metis_tac[eval_vn_valid_thm,wf_assign_thm]
+  >- metis_tac[state_assign_thm]
+  >- metis_tac[get_num_assign_thm]
+  >> fs[set_var_def,lookup_insert]);
+
+val eval_vn_assign_wide_thm = Q.store_thm("eval_vn_assign_wide",
+  `∀vn1 vn2 res1 res2 dst1 dst2 vn nums s z.
+    wf_nums nums ∧ cse_state_rel nums s ∧
+    eval_vn vn1 nums s = SOME res1 ∧
+    eval_vn vn2 nums s = SOME res2 ⇒
+    eval_vn vn (assign_num dst2 vn2 (assign_num dst1 vn1 nums))
+      (set_var dst2 res2 (set_var dst1 res1 s)) = SOME z ⇒
+    eval_vn vn nums s = SOME z`,
+  ntac 6 gen_tac >> recInduct eval_vn_ind >> rw []
+  >- fs [eval_vn_def]
+  >> simp [eval_vn_thm]
+  >> imp_res_tac eval_vn_valid_thm
+  >> `wf_nums (assign_num dst1 vn1 nums)` by metis_tac[wf_assign_thm]
+  >> `cse_state_rel (assign_num dst1 vn1 nums) (set_var dst1 res1 s)` by
+       metis_tac[state_assign_thm]
+  >> fs [eval_vn_def, label_assign_thm, operands_assign_thm]
+  >> imp_res_tac held_assign_thm >> fs[valid_assign_thm]
+  >> ntac 4 (pop_assum (K ALL_TAC))
+  >> reverse(fs[case_eq])
+  >- (
+    drule option_seq_mono >> rw []
+    >> pop_assum (qspecl_then [`\v. eval_vn v nums s`] assume_tac)
+    >> rfs [eval_vnode_def,eval_exp_def])
+  >> Cases_on `vn2 = VN n` >> Cases_on `vn1 = VN n` >> fs[]
+  >> metis_tac[get_any_insert_thm,eval_vn_thm,get_any_delete_thm,
+       get_any_cases_thm,held_assign_thm]);
+
+val eval_var_assign_wide_thm = Q.store_thm("eval_var_assign_wide",
+  `∀var z vn1 vn2 dst1 dst2 res1 res2 nums s.
+    wf_nums nums ∧ cse_state_rel nums s ∧
+    eval_var var (assign_num dst2 vn2 (assign_num dst1 vn1 nums))
+      (set_var dst2 res2 (set_var dst1 res1 s)) = SOME z ∧
+    eval_vn vn1 nums s = SOME res1 ∧
+    eval_vn vn2 nums s = SOME res2 ⇒
+    if var = dst2 then z = res2
+    else if var = dst1 then z = res1
+    else eval_var var nums s = SOME z`,
+  rw[eval_var_def,get_num_assign_thm]
+  >> drule_all eval_vn_assign_wide_thm >> strip_tac >> fs[]);
 
 (* add_empty_vnode *)
 val get_num_not_next_thm = Q.prove(`
@@ -877,6 +963,12 @@ val domain_add_empty_vnode_thm = Q.prove(`
        `nums with vnodes updated_by insert_use nums.next n` assume_tac)
   >> fs [insert_use_def] >> CASE_TAC
   >> metis_tac [domain_insert, domain_lookup, ABSORPTION]);
+
+val valid_add_empty_vnode_thm = Q.prove(`
+  ∀vn lbl ops nums.
+  valid vn (add_empty_vnode lbl ops nums) ⇔
+  vn = (VN nums.next) ∨ valid vn nums`,
+  rw[] >> Cases_on `vn` >> fs[valid_def,domain_add_empty_vnode_thm]);
 
 val operands_add_uses_thm = Q.prove(`
   ∀(ops :α vnumber list) (nums :α vnumbering) n vn.
@@ -1030,6 +1122,35 @@ val state_add_empty_vnode_thm = Q.prove(`
     fs[cse_state_rel_def,eval_var_def])
   >- metis_tac[get_num_add_empty_vnode_thm,cse_state_rel_def]);
 
+val eval_vn_add_empty_vnode_wide_thm = Q.prove(`
+  ∀nums ops lbl vn nums1 nums2 st.
+  wf_nums nums ∧ cse_state_rel nums st ∧
+  EVERY (\p. valid p nums) ops ∧
+  add_empty_vnode (lbl High) ops nums = nums1 ∧
+  add_empty_vnode (lbl Low) ops nums1 = nums2 ⇒
+  eval_vn vn nums2 st = 
+    if vn = VN nums1.next then eval_exp (lbl Low) ops nums st
+    else if vn = VN nums.next then eval_exp (lbl High) ops nums st
+    else eval_vn vn nums st`,
+  rpt gen_tac >> strip_tac
+  >> `wf_nums (add_empty_vnode (lbl High) ops nums)` by
+       metis_tac[wf_add_empty_vnode_thm]
+  >> `cse_state_rel (add_empty_vnode (lbl High) ops nums) st` by
+       metis_tac[state_add_empty_vnode_thm]
+  >> drule eval_vn_add_empty_vnode_thm >> disch_then drule
+  >> fs[valid_add_empty_vnode_thm]
+  >> disch_then (qspecl_then [`ops`, `lbl Low`] mp_tac)
+  >> fs[RIGHT_FORALL_IMP_THM]
+  >> impl_tac >- (irule EVERY_MONOTONIC >> HINT_EXISTS_TAC >> metis_tac[])
+  >> disch_then (lt fs) >> drule_all eval_vn_add_empty_vnode_thm
+  >> strip_tac >> fs[] >> TOP_CASE_TAC >> rw[]
+  >> ONCE_REWRITE_TAC [eval_exp_def] >> fs[]
+  >> `MAP (λv. if v = VN nums.next then eval_exp (lbl High) ops nums st
+       else eval_vn v nums st) ops =  MAP (λv. eval_vn v nums st) ops` by (
+         rw[MAP_EQ_f] >> rw[] >> imp_res_tac EVERY_MEM
+         >> metis_tac[LESS_EQ_REFL,wf_nums_def,valid_def])
+  >> fs[]);
+
 (* add_vnode *)
 val wf_add_vnode_thm = Q.prove(`
   ∀lbl dst ops nums.
@@ -1038,13 +1159,6 @@ val wf_add_vnode_thm = Q.prove(`
   rw [add_vnode_def] >> match_mp_tac wf_assign_thm
   >> fs [valid_def, domain_add_empty_vnode_thm]
   >> metis_tac [wf_add_empty_vnode_thm]);
-
-val eval_vns_valid_thm = Q.prove(`
-  ∀ops nums st x.
-  option_seq (MAP (λv. eval_vn v nums st) ops) = SOME x ⇒
-  EVERY (λp. valid p nums) ops`,
-  Induct >> rw [option_seq_def, option_case_eq]
-  >> metis_tac [eval_vn_valid_thm]);
 
 val eval_var_add_vnode_thm = Q.prove(`
   ∀nums ops lbl var st dst x res.
@@ -1090,8 +1204,8 @@ val eval_vn_add_vnode_unknown_thm = Q.prove(`
     fs[label_add_empty_vnode_thm,held_add_empty_vnode_thm]>>
     full_case_tac
     >- ((* eval on nums.next *)
-      fs[eval_label_def,option_seq_def,held_def]>>CASE_TAC>>
-      fs[get_any_def,min_only_thm]>>
+      fs[eval_label_def,fold_def,the_words_def,option_seq_def,held_def]>>
+      CASE_TAC>>fs[get_any_def,min_only_thm]>>
       metis_tac[wf_nums_def,LESS_EQ_REFL,NOT_NONE_SOME,domain_lookup])
     >- (
       CASE_TAC>-(fs[]>>drule_all dag_thm>>fs[])>>fs[]>>
@@ -1103,6 +1217,8 @@ val eval_vn_add_vnode_unknown_thm = Q.prove(`
       fs[]>>full_case_tac>>
       `dst ∉ held n nums` by metis_tac [wf_nums_def, NOT_NONE_SOME]>>
       fs [DELETE_NON_ELEMENT])));
+
+
 
 val state_add_vnode_thm = Q.prove(`
   ∀nums lbl dst ops x st.
@@ -1129,26 +1245,42 @@ val get_num_add_vnode_thm = Q.prove(`
   if var = dst then SOME (VN nums.next) else get_num var nums`,
   fs[add_vnode_def,get_num_assign_thm,get_num_add_empty_vnode_thm]);
 
+val invariant_add_vnode_thm = Q.prove(`
+  ∀temp nums st loc dst lbl vns z.
+  cse_invariant temp nums st loc ∧ dst < temp ∧
+  eval_exp lbl vns nums st = SOME z ⇒
+  cse_invariant temp (add_vnode lbl dst vns nums) (set_var dst z st)
+    (insert dst z loc)`,
+  rw[cse_invariant_def,cse_locals_rel_def]
+  >- (
+    irule wf_add_vnode_thm >> fs[eval_exp_def]
+    >> drule option_seq_some >> rw[IS_SOME_EXISTS,EVERY_MAP]
+    >> irule EVERY_MONOTONIC >> HINT_EXISTS_TAC
+    >> metis_tac[eval_vn_valid_thm])
+  >- metis_tac[state_add_vnode_thm]
+  >- (fs[get_num_add_vnode_thm] >> Cases_on `k = dst` >> fs[])
+  >> fs[locals_rel_def,set_var_def,lookup_insert]);
+
 (* get_or_assign_num *)
 val get_or_assign_num_thm = Q.prove(`
-  ∀var1 var2 nums vn nnums.
-  get_or_assign_num var1 nums = (vn, nnums) ⇒
+  ∀var1 var2 nums vn nnums m.
+  get_or_assign_num var1 nums = (vn, nnums, m) ⇒
   get_num var2 nnums = if var1 = var2 then SOME vn else get_num var2 nums`,
   rpt gen_tac >> fs[get_or_assign_num_def] >> full_case_tac
   >> rw[add_vnode_def] >> fs[get_num_assign_thm,get_num_add_empty_vnode_thm]);
 
 val wf_get_or_assign_thm = Q.prove(`
-  ∀var nums vn nnums.  
+  ∀var nums vn nnums m.
   wf_nums nums ⇒
-  get_or_assign_num var nums = (vn, nnums) ⇒
+  get_or_assign_num var nums = (vn, nnums, m) ⇒
   wf_nums nnums`,
   rpt gen_tac>>fs[get_or_assign_num_def]>>full_case_tac>>
   rw[]>>fs[wf_add_vnode_thm]);
 
 val state_get_or_assign_thm = Q.prove(`
-  ∀var nums st vn nnums.  
+  ∀var nums st vn nnums m.
   wf_nums nums ∧ cse_state_rel nums st ∧ IS_SOME(get_var var st) ∧
-  get_or_assign_num var nums = (vn, nnums) ⇒
+  get_or_assign_num var nums = (vn, nnums, m) ⇒
   cse_state_rel nnums st`,
   rpt gen_tac>>fs[get_or_assign_num_def]>>full_case_tac>>
   strip_tac>>rw[cse_state_rel_def]
@@ -1163,21 +1295,26 @@ val state_get_or_assign_thm = Q.prove(`
     fs[add_vnode_def,get_num_assign_thm,get_num_add_empty_vnode_thm]>>
     Cases_on `var=var'`>>fs[]>>metis_tac[cse_state_rel_def]));
 
+val get_or_assign_modified = Q.prove(`
+  ∀var nums vn nnums.
+  get_or_assign_num var nums = (vn, nnums, F) ⇒ nums = nnums`,
+  rw[get_or_assign_num_def,case_eq]);
+
 (* get_or_assign_nums *)
 val get_num_get_or_assign_nums_thm = Q.prove(`
-  ∀vars vns nnums vn nums var.
-  get_or_assign_nums vars nums = (vns, nnums) ∧
+  ∀vars vns nnums vn nums var m.
+  get_or_assign_nums vars nums = (vns, nnums, m) ∧
   get_num var nums = SOME vn ⇒
   get_num var nnums = SOME vn`,
-  Induct>>fs[get_or_assign_nums_def]>>
-  rw[]>>rpt (pairarg_tac>>fs[])>>
-  first_x_assum irule>>qexists_tac `nums1`>>qexists_tac `vns'`>>
-  fs[get_or_assign_num_def]>>Cases_on `get_num h nums`>>fs[]>>
-  rw [add_vnode_def,get_num_assign_thm,get_num_add_empty_vnode_thm]>>fs[]);
+  Induct >> fs[get_or_assign_nums_def]
+  >> rw [] >> pairs_tac >> first_x_assum irule
+  >> qexists_tac `m2` >> qexists_tac `nums1` >> qexists_tac `vns'`
+  >> fs[get_or_assign_num_def] >> Cases_on `get_num h nums` >> fs[]
+  >> rw [add_vnode_def,get_num_assign_thm,get_num_add_empty_vnode_thm] >> fs[]);
 
 val get_or_assign_nums_thm = Q.prove(`
-  ∀vars var nums vns nnums.
-  get_or_assign_nums vars nums = (vns, nnums) ⇒
+  ∀vars var nums vns nnums m.
+  get_or_assign_nums vars nums = (vns, nnums, m) ⇒
   get_num var nnums =
   case get_num var nums of
     | SOME vn => SOME vn
@@ -1194,16 +1331,16 @@ val get_or_assign_nums_thm = Q.prove(`
   >> drule get_or_assign_num_thm >> strip_tac >> fs[] >> rfs[]);
 
 val wf_get_or_assign_nums_thm = Q.prove(`
-  ∀vars nums vns nnums.
-  wf_nums nums ∧ get_or_assign_nums vars nums = (vns, nnums) ⇒
+  ∀vars nums vns nnums m.
+  wf_nums nums ∧ get_or_assign_nums vars nums = (vns, nnums, m) ⇒
   wf_nums nnums`,
   Induct>>fs[get_or_assign_nums_def]>>
   rw[]>>rpt (pairarg_tac>>fs[])>>
   metis_tac[wf_get_or_assign_thm]);
 
 val valid_get_or_assign_nums_thm = Q.prove(`
-  ∀vars nums vns nnums.
-  wf_nums nums ∧ get_or_assign_nums vars nums = (vns, nnums) ⇒
+  ∀vars nums vns nnums m.
+  wf_nums nums ∧ get_or_assign_nums vars nums = (vns, nnums, m) ⇒
   EVERY (\v. valid v nnums) vns`,
   Induct>>fs[get_or_assign_nums_def]>>
   rw[]>>rpt (pairarg_tac>>fs[])>>rw[]
@@ -1216,35 +1353,91 @@ val valid_get_or_assign_nums_thm = Q.prove(`
     metis_tac[wf_get_or_assign_nums_thm, wf_get_or_assign_thm]));
 
 val state_get_or_assign_nums_thm = Q.prove(`
-  ∀vars nums vns nnums st.
+  ∀vars nums vns nnums st m.
   wf_nums nums ∧ cse_state_rel nums st ∧
   EVERY (\v. IS_SOME(get_var v st)) vars ∧
-  get_or_assign_nums vars nums = (vns, nnums) ⇒
+  get_or_assign_nums vars nums = (vns, nnums, m) ⇒
   cse_state_rel nnums st`,
   Induct>>fs[get_or_assign_nums_def]>>
   rw[]>>rpt (pairarg_tac>>fs[])>>
   metis_tac[state_get_or_assign_thm,wf_get_or_assign_thm]);
 
-val the_words_get_or_assign_nums_thm = Q.prove(`
-  ∀vars ws nums st nnums vns.
+val get_var_get_or_assign_nums_thm = Q.prove(`
+  ∀nums st nnums vns var m temp.
   wf_nums nums ∧ cse_state_rel nums st ∧
-  get_or_assign_nums vars nums = (vns,nnums) ∧
-  the_words (MAP (λv. get_var v st) vars) = SOME ws ⇒
-  option_seq (MAP (λv. eval_vn v nnums st) vns) = SOME (MAP Word ws)`,
-  Induct >> fs[option_seq_def,the_words_def,get_or_assign_nums_def,case_eq]
+  get_or_assign_nums [var] nums = (vns,nnums,m) ∧
+  get_var var st = SOME w ⇒
+  option_seq (MAP (λv. eval_vn v nnums st) vns) = SOME [w]`,
+  rw[get_or_assign_nums_def] >> pairs_tac >> rw[] 
+  >> drule_all wf_get_or_assign_thm >> strip_tac
+  >> `cse_state_rel nnums st` by
+       metis_tac[state_get_or_assign_thm,IS_SOME_EXISTS]
+  >> drule get_or_assign_num_thm >> disch_then (qspec_then `var` assume_tac)
+  >> fs[option_seq_def,case_eq] >> Cases_on `vn`
+  >- (fs [cse_state_rel_def,eval_var_def] >> res_tac >> fs[eval_vn_def])
+  >- (irule get_any_eval_vn_thm >> metis_tac[get_any_get_var_thm]));
+
+val get_vars_get_or_assign_nums_thm = Q.prove(`
+  ∀vars ws nums st nnums vns m.
+  wf_nums nums ∧ cse_state_rel nums st ∧
+  get_or_assign_nums vars nums = (vns,nnums,m) ∧
+  get_vars vars st = SOME ws ⇒
+  option_seq (MAP (λv. eval_vn v nnums st) vns) = SOME ws`,
+  Induct >> fs[option_seq_def,get_vars_def,get_or_assign_nums_def,case_eq]
   >> rw[] >> pairs_tac >> rw[]
   >> drule_all wf_get_or_assign_thm >> strip_tac 
   >> `cse_state_rel nums1 st` by
        metis_tac[state_get_or_assign_thm,IS_SOME_EXISTS]
   >> drule_all wf_get_or_assign_nums_thm >> strip_tac
-  >> `cse_state_rel nnums st` by
-       metis_tac[state_get_or_assign_nums_thm,the_words_EVERY_IS_SOME,EVERY_MAP]
+  >> `cse_state_rel nnums st` by 
+       metis_tac[state_get_or_assign_nums_thm,get_vars_every]
   >> reverse(rw[option_seq_def,case_eq]) >- (metis_tac[])
   >> drule_all get_or_assign_num_thm >> disch_then (qspec_then `h` assume_tac)
   >> drule_all get_or_assign_nums_thm >> disch_then (qspec_then `h` assume_tac)
   >> rfs[] >> Cases_on `vn`
   >- (fs [cse_state_rel_def,eval_var_def] >> res_tac >> fs[eval_vn_def])
   >- (irule get_any_eval_vn_thm >> metis_tac[get_any_get_var_thm]));
+
+val the_words_get_or_assign_nums_thm = Q.prove(`
+  ∀vars ws nums st nnums vns m.
+  wf_nums nums ∧ cse_state_rel nums st ∧
+  get_or_assign_nums vars nums = (vns,nnums,m) ∧
+  the_words (MAP (λv. get_var v st) vars) = SOME ws ⇒
+  option_seq (MAP (λv. eval_vn v nnums st) vns) = SOME (MAP Word ws)`,
+  metis_tac [get_vars_the_words,get_vars_get_or_assign_nums_thm]);
+
+val get_or_assign_nums_modified = Q.prove(`
+  ∀vars nums vns nnums.
+  get_or_assign_nums vars nums = (vns, nnums, F) ⇒ nums = nnums`,
+  Induct >> rw[get_or_assign_nums_def] >> pairs_tac
+  >> rw[] >> metis_tac[get_or_assign_modified]);
+
+val length_get_or_assign_nums = Q.prove(`
+  ∀vars vns nums nnums m.
+  get_or_assign_nums vars nums = (vns,nnums,m) ⇒
+  LENGTH vars = LENGTH vns`,
+  Induct >> rw[get_or_assign_nums_def]
+  >> pairs_tac >> rw[] >> metis_tac[]);
+
+val invariant_get_or_assign_nums = Q.prove(`
+  ∀temp nums st loc args vns nnums m.
+  get_or_assign_nums args nums = (vns,nnums,m) ∧
+  cse_invariant temp nums st loc ∧
+  EVERY (\v. v < temp) args ∧
+  EVERY (\v. IS_SOME(get_var v st)) args ⇒
+  cse_invariant temp nnums st loc`,
+  rw[cse_invariant_def] >> pairs_tac >> rw[]
+  >- metis_tac[wf_get_or_assign_nums_thm]
+  >- metis_tac[state_get_or_assign_nums_thm]
+  >> fs[cse_locals_rel_def] >> rw[]
+  >> drule_then (lt fs) get_or_assign_nums_thm
+  >> Cases_on `get_num k nums` >> fs[]
+  >> fs[IS_SOME_EXISTS]
+  >> imp_res_tac length_get_or_assign_nums
+  >> imp_res_tac ALOOKUP_MEM
+  >> imp_res_tac MEM_ZIP
+  >> `MEM (EL n args) args` by metis_tac [MEM_EL]
+  >> imp_res_tac EVERY_MEM >> fs[]);
 
 (* find_exp thms *)
 val all_const_the_words_thm = Q.prove(`
@@ -1279,43 +1472,124 @@ val find_exp_eval_vn_thm = Q.prove(`
     fs[eval_exp_def,fold_def,eval_label_def,eval_vn_def]>>
     drule_all all_const_the_words_thm>>rw[]>>fs[]));
 
-val gen_prog_thm = Q.prove(`
-  ∀nums st res dst vn nprog temp rloc loc.
+(* move thms *)
+val pick_source_thm = Q.prove(`
+  ∀nums n var.
+  wf_nums nums ∧
+  pick_source n nums = SOME var ⇒
+  get_num var nums = SOME (VN n)`,
+  rw[] >> fs[pick_source_def,case_eq,wf_nums_def,held_def,domain_lookup]
+  >> fs[GSYM MEM_toAList]);
+
+val pick_source_loc_thm = Q.prove(`
+  ∀nums n var temp st loc res.
+  cse_invariant temp nums st loc ∧
+  eval_vn (VN n) nums st = SOME res ∧
+  pick_source n nums = SOME var ⇒
+  lookup var loc = SOME res`,
+  rw[] >> drule get_num_thm >> fs[cse_invariant_def]
+  >> drule_all pick_source_thm >> strip_tac
+  >> disch_then drule_all >> rw[]);
+
+val gen_move_thm = Q.prove(`
+  ∀nums st res dst vn nprog temp loc.
   cse_invariant temp nums st loc ∧ eval_vn vn nums st = SOME res ∧
-  gen_prog dst vn nums = SOME nprog ⇒
-  ∃rloc.
+  gen_move dst vn nums = SOME nprog ⇒ ∃rloc.
   evaluate (nprog,st with locals := loc) = (NONE,st with locals := rloc) ∧
-  ∀v. v < temp ⇒ lookup v rloc =
-    if v = dst then SOME res else lookup v st.locals`,
-  rw[gen_prog_def]
+  locals_rel temp (insert dst res loc) rloc`,
+  rw[locals_rel_def] >> Cases_on `vn`
   >- (
-    fs[evaluate_def] >> qexists_tac `loc` >> rw[]
-    >- metis_tac [get_num_thm]
-    >- metis_tac [cse_invariant_def,cse_locals_rel_thm])
-  >- (
-    Cases_on `vn`
-    >- (
-      fs[gen_move_def,eval_vn_def]
-      >> rw[evaluate_def,inst_def,assign_def,case_eq,word_exp_def]
-      >> qexists_tac `insert dst (Word c) loc` >> rw[set_var_def]
-      >> metis_tac[lookup_insert,cse_invariant_def,cse_locals_rel_thm])
-    >> fs[gen_move_def,case_eq]
+    fs[gen_move_def,eval_vn_def]
     >> rw[evaluate_def,inst_def,assign_def,case_eq,word_exp_def]
-    >> qexists_tac `insert dst res loc`
+    >> qexists_tac `insert dst (Word c) loc` >> rw[set_var_def])
+  >> fs[gen_move_def,case_eq]
+  >> rw[evaluate_def,inst_def,assign_def,case_eq,word_exp_def]
+  >> qexists_tac `insert dst res loc`
+  >> fs[get_vars_def,set_vars_def,get_var_def,case_eq]
+  >> qexists_tac `[res]` >> rw[alist_insert_def]
+  >> metis_tac[get_num_thm,cse_invariant_def,pick_source_thm]);
+
+val gen_wide_move_thm = Q.prove(`
+  ∀nums st res1 res2 dst1 dst2 vn1 vn2 nprog temp loc.
+  cse_invariant temp nums st loc ∧ dst1 <> dst2 ∧
+  eval_vn vn1 nums st = SOME res1 ∧ eval_vn vn2 nums st = SOME res2 ∧
+  gen_wide_move dst1 dst2 vn1 vn2 nums = SOME nprog ⇒ ∃rloc.
+  evaluate (nprog,st with locals := loc) = (NONE,st with locals := rloc) ∧
+  locals_rel temp (insert dst2 res2 (insert dst1 res1 loc)) rloc`,
+  rw[] >> fs[evaluate_def] >> pairs_tac
+  >> Cases_on `vn1` >> Cases_on `vn2` >> fs[gen_wide_move_def,case_eq]
+  >- (
+    fs[gen_move_def,eval_vn_def]
+    >> rw[evaluate_def,inst_def,assign_def,case_eq,word_exp_def,set_var_def]
+    >> qexists_tac `insert dst2 (Word c') (insert dst1 (Word c) loc)`
+    >> fs[locals_rel_def,lookup_insert])
+  >- (
+    fs[gen_move_def,case_eq]
+    >> rw[evaluate_def,inst_def,assign_def,case_eq,word_exp_def]
+    >> qexists_tac `insert dst2 res2 (insert dst1 (Word c) loc)` >> pairs_tac
     >> fs[get_vars_def,set_vars_def,get_var_def,case_eq]
-    >> reverse(rw[lookup_insert])
-    >- metis_tac[cse_invariant_def,cse_locals_rel_thm]
-    >> qexists_tac `[res]` >> rw[alist_insert_def]
-    >> `i ∈ held n nums` by (fs[held_def,domain_lookup] >> fs[GSYM MEM_toAList])
-    >> `get_num i nums = SOME (VN n)` by fs[wf_nums_def,cse_invariant_def]
-    >> metis_tac[get_num_thm]));
+    >> imp_res_tac pick_source_loc_thm >> fs[] >> rw[]
+    >> fs[set_var_def,alist_insert_def,locals_rel_def,lookup_insert,eval_vn_def]
+    >> metis_tac[insert_insert])
+  >- (
+    fs[gen_move_def,case_eq]
+    >> rw[evaluate_def,inst_def,assign_def,case_eq,word_exp_def]
+    >> qexists_tac `insert dst2 (Word c) (insert dst1 res1 loc)` >> pairs_tac
+    >> fs[get_vars_def,set_vars_def,get_var_def,case_eq]
+    >> imp_res_tac pick_source_loc_thm >> fs[locals_rel_def] >> rw[]
+    >> fs[set_var_def,alist_insert_def,lookup_insert,eval_vn_def])
+  >- (
+    rw[evaluate_def,inst_def,assign_def,case_eq,word_exp_def]
+    >> qexists_tac `insert dst2 res2 (insert dst1 res1 loc)` >> pairs_tac
+    >> fs[get_vars_def,set_vars_def,get_var_def,case_eq]
+    >> imp_res_tac pick_source_loc_thm >> fs[locals_rel_def] >> rw[]
+    >> fs[set_var_def,alist_insert_def,lookup_insert,eval_vn_def]
+    >> metis_tac[insert_insert]));
+
+val gen_prog_thm = Q.prove(`
+  ∀nums st res dst vn nprog temp loc.
+  cse_invariant temp nums st loc ∧ eval_vn vn nums st = SOME res ∧
+  gen_prog dst vn nums = SOME nprog ⇒ ∃rloc.
+  evaluate (nprog,st with locals := loc) = (NONE,st with locals := rloc) ∧
+  locals_rel temp (insert dst res loc) rloc`,
+  rw[gen_prog_def,locals_rel_def]
+  >- (
+    fs[evaluate_def,lookup_insert] >> qexists_tac `loc`
+    >> rw[] >> metis_tac [get_num_thm])
+  >> metis_tac[gen_move_thm,locals_rel_def]);
+
+val gen_wide_prog_thm = Q.prove(`
+  ∀nums st res1 res2 dst1 dst2 vn1 vn2 nprog temp loc.
+  cse_invariant temp nums st loc ∧ 
+  eval_vn vn1 nums st = SOME res1 ∧ eval_vn vn2 nums st = SOME res2 ∧
+  gen_wide_prog dst1 dst2 vn1 vn2 nums = SOME nprog ⇒ ∃rloc.
+  evaluate (nprog,st with locals := loc) = (NONE,st with locals := rloc) ∧
+  locals_rel temp (insert dst2 res2 (insert dst1 res1 loc)) rloc`,
+  reverse(rw[gen_wide_prog_def]) >- metis_tac[gen_wide_move_thm]
+  >> drule_all gen_prog_thm >> metis_tac[insert_insert]);
+
+val redun_replace_def = Define `
+  (redun_replace Skip ⇔ T) ∧
+  (redun_replace (Inst (Const dst w)) ⇔ T) ∧
+  (redun_replace (Move pre moves) ⇔ T) ∧
+  (redun_replace p ⇔ F)`;
 
 val gen_prog_cases_thm = Q.prove(`
   ∀dst vn nums nprog.
   gen_prog dst vn nums = SOME nprog ⇒
-  nprog = Skip ∨ ∃w. nprog = Inst (Const dst w) ∨ ∃s. nprog = Move 0 [(dst,s)]`,
-  rw[gen_prog_def] >> Cases_on `vn` >> fs[gen_move_def]
-  >> every_case_tac >> fs[] >> rw[]);
+  redun_replace nprog`,
+  rw[gen_prog_def] >> Cases_on `vn` >> fs[gen_move_def] >> every_case_tac
+  >> rw[] >> fs[redun_replace_def]);
+
+val gen_wide_prog_cases_thm = Q.prove(`
+  ∀dst vn nums nprog dst1 dst2 vn1 vn2.
+  gen_wide_prog dst1 dst2 vn1 vn2 nums = SOME nprog ⇒
+  redun_replace nprog ∨
+  (∃p1 p2. nprog = Seq p1 p2 ∧ redun_replace p1 ∧ redun_replace p2)`,
+  rw[gen_wide_prog_def] >- metis_tac[gen_prog_cases_thm]
+  >> Cases_on `vn1` >> Cases_on `vn2`
+  >> fs[gen_wide_move_def,case_eq,gen_move_def] >> rw[]
+  >> fs[redun_replace_def]);
 
 (* cse_move thms *)
 val wf_assign_nums_thm = Q.store_thm("wf_assign_nums",
@@ -1711,112 +1985,272 @@ val evaluate_cse_move_thm = Q.prove(`
     >- (rw[] >> metis_tac[IS_SOME_EXISTS,cse_locals_rel_def])
     >> strip_tac >> imp_res_tac EVERY_MEM
     >> fs[MEM_MAP] >> pop_assum irule >> qexists_tac `k,x''`
-    >> fs [ALOOKUP_MEM,IS_SOME_EXISTS])
+    >> fs[ALOOKUP_MEM,IS_SOME_EXISTS])
   >> rw[locals_rel_def]
   >> metis_tac[redun_move_get_var_thm,get_var_def,cse_invariant_def]);
 
-val evaluate_cse_assign_thm = Q.prove(`
-  ∀dst exp nums st loc temp.
-  every_var (λx. x < temp) (Assign dst exp) ∧
+val invariant_add_wide_vnode_thm = Q.prove(`
+  ∀temp nums st loc lbl vns dst1 dst2 z1 z2.
+  cse_invariant temp nums st loc ∧ dst1 < temp ∧ dst2 < temp ∧
+  eval_exp (lbl High) vns nums st = SOME z1 ∧
+  eval_exp (lbl Low) vns nums st = SOME z2 ⇒
+  cse_invariant temp
+    (add_wide_vnode lbl dst1 dst2 vns nums)
+    (set_var dst2 z2 (set_var dst1 z1 st))
+    (insert dst2 z2 (insert dst1 z1 loc))`,
+  rw[cse_invariant_def,cse_locals_rel_def,add_wide_vnode_def]
+  >- (
+    irule wf_assign_nums_thm >- rw[valid_add_empty_vnode_thm]
+    >> irule wf_add_empty_vnode_thm >> fs[eval_exp_def]
+    >- metis_tac[wf_add_empty_vnode_thm,eval_vns_valid_thm]
+    >> drule eval_vns_valid_thm >> strip_tac
+    >> fs[valid_add_empty_vnode_thm,eval_exp_def]
+    >> irule EVERY_MONOTONIC >> HINT_EXISTS_TAC >> fs[])
+  >- (
+    fs[assign_nums_def] >> rw[cse_state_rel_def]
+    >- (
+      `EVERY (λp. valid p nums) vns` by
+        (fs[eval_exp_def] >> metis_tac [eval_vns_valid_thm])
+      >> drule_all_then (qspec_then `lbl High` assume_tac)
+           state_add_empty_vnode_thm
+      >> drule_all_then (qspec_then `lbl High` assume_tac)
+           wf_add_empty_vnode_thm
+      >> `EVERY (λp. valid p (add_empty_vnode (lbl High) vns nums)) vns` by (
+           fs[valid_add_empty_vnode_thm] >> irule EVERY_MONOTONIC
+           >> HINT_EXISTS_TAC >> metis_tac[])
+      >> drule_all_then (qspec_then `lbl Low` assume_tac)
+           state_add_empty_vnode_thm 
+      >> drule_all_then (qspec_then `lbl Low` assume_tac)
+           wf_add_empty_vnode_thm
+      >> drule eval_var_assign_wide_thm >> rpt (disch_then drule)
+      >> reverse(impl_tac)
+      >- (rw[get_var_set_var_thm] >> metis_tac[cse_state_rel_def])
+      >> qspecl_then [`nums`, `vns`] mp_tac eval_vn_add_empty_vnode_wide_thm
+      >> rpt (disch_then drule) >> fs[]
+      >> disch_then (qspecl_then [`lbl`, `vn`] assume_tac)
+      >> fs[next_add_empty_vnode_thm])
+    >- (
+      rw[get_var_set_var_thm]
+      >> fs[get_num_assign_thm,get_num_add_empty_vnode_thm]
+      >> metis_tac[cse_state_rel_def]))
+  >- (
+    fs[assign_nums_def,get_num_assign_thm,get_num_add_empty_vnode_thm]
+    >> Cases_on `k = dst2` >> fs[] >> Cases_on `k = dst1` >> fs[])
+  >- fs[locals_rel_def,set_var_def,lookup_insert]);
+
+val cse_exp_thm = Q.prove(`
+  ∀lbl dst args nums nprog nnums st loc temp vals.
+  cse_invariant temp nums st loc ∧
+  cse_exp lbl dst args nums = (nprog,nnums) ∧
+  get_vars args st = SOME vals ⇒
+  (∀z. dst < temp ∧ EVERY (\l. l < temp) args ∧ eval_label lbl vals = SOME z ⇒
+  case nprog of
+    | SOME p => ∃rloc.
+        evaluate (p,st with locals := loc) = (NONE,st with locals := rloc) ∧
+        cse_invariant temp nnums (set_var dst z st) rloc
+    | NONE => 
+        cse_invariant temp nnums (set_var dst z st) (insert dst z loc))`,
+  fs[cse_exp_def] >> rpt gen_tac >> ntac 3 strip_tac >> pairs_tac
+  >> Cases_on `nprog` >> fs[case_eq]
+  >- ( (* no match *)
+    Cases_on `modified` >> fs[case_eq] >> rw[]
+    >> irule invariant_add_vnode_thm >> fs[eval_exp_def]
+    >> metis_tac[get_vars_get_or_assign_nums_thm,cse_invariant_def,
+         get_vars_every,invariant_get_or_assign_nums])
+  >- ( (* match *)
+    Cases_on `modified` >> fs[case_eq,redun_exp_def]
+    >> drule invariant_get_or_assign_nums >> rpt (disch_then drule)
+    >> fs[get_vars_every] >> strip_tac
+    >> qspecl_then [`st`, `lbl`, `vns`, `nnums'`, `vn`, `z`] mp_tac
+         find_exp_eval_vn_thm
+    >> impl_tac >- (
+      fs[cse_invariant_def,eval_exp_def,eval_label_def]
+      >> drule_all get_vars_get_or_assign_nums_thm >> fs[])
+    >> strip_tac >> drule_all gen_prog_thm >> rw[] >> qexists_tac `rloc` >> rw[]
+    >> irule invariant_assign_thm >> fs[] >> metis_tac[]));
+
+val cse_const_exp_thm = Q.prove(`
+  ∀lbl dst args c nums nprog nnums st loc temp vals.
+  cse_invariant temp nums st loc ∧
+  cse_const_exp lbl dst args c nums = (nprog,nnums) ∧
+  get_vars args st = SOME vals ⇒
+  (∀z. dst < temp ∧ EVERY (\l. l < temp) args ∧ eval_label lbl (vals ++ [Word c]) = SOME z ⇒
+  case nprog of
+    | SOME p => ∃rloc.
+        evaluate (p,st with locals := loc) = (NONE,st with locals := rloc) ∧
+        cse_invariant temp nnums (set_var dst z st) rloc
+    | NONE => 
+        cse_invariant temp nnums (set_var dst z st) (insert dst z loc))`,
+  fs[cse_const_exp_def] >> rpt gen_tac >> ntac 3 strip_tac >> pairs_tac
+  >> Cases_on `nprog` >> fs[case_eq]
+  >- ( (* no match *)
+    Cases_on `modified` >> fs[case_eq] >> rw[]
+    >> irule invariant_add_vnode_thm >> fs[eval_exp_def]
+    >> fs[option_seq_append,eval_vn_def]
+    >> metis_tac[get_vars_get_or_assign_nums_thm,cse_invariant_def,
+         get_vars_every,invariant_get_or_assign_nums])
+  >- ( (* match *)
+    Cases_on `modified` >> fs[case_eq,redun_exp_def]
+    >> drule get_or_assign_nums_modified >> rw[]
+    >> qspecl_then [`st`, `lbl`, `vns1⧺[VConst c]`, `nnums'`, `vn`, `z`] mp_tac
+         find_exp_eval_vn_thm
+    >> impl_tac >- (
+      fs[cse_invariant_def,eval_exp_def,eval_label_def]
+      >> drule_all get_vars_get_or_assign_nums_thm
+      >> fs[option_seq_append,eval_vn_def])
+    >> strip_tac >> drule_all gen_prog_thm >> rw[] >> qexists_tac `rloc` >> rw[]
+    >> irule invariant_assign_thm >> fs[] >> metis_tac[]));
+
+val cse_wide_exp_thm = Q.prove(`
+  ∀lbl dst1 dst2 args nums nprog nnums st loc temp vals.
+  cse_invariant temp nums st loc ∧
+  cse_wide_exp lbl dst1 dst2 args nums = (nprog,nnums) ∧
+  get_vars args st = SOME vals ⇒
+  (∀z1 z2. dst1 < temp ∧ dst2 < temp ∧ EVERY (\l. l < temp) args ∧
+  eval_label (lbl High) vals = SOME z1 ∧ eval_label (lbl Low) vals = SOME z2 ⇒
+  case nprog of
+    | SOME p => ∃rloc.
+        evaluate (p,st with locals := loc) = (NONE,st with locals := rloc) ∧
+        cse_invariant temp nnums (set_var dst2 z2 (set_var dst1 z1 st)) rloc
+    | NONE => 
+        cse_invariant temp nnums (set_var dst2 z2 (set_var dst1 z1 st))
+          (insert dst2 z2 (insert dst1 z1 loc)))`,
+  rw[cse_wide_exp_def] >> pairs_tac >> Cases_on `nprog` >> fs[case_eq]
+  >- (
+    Cases_on `modified` >> fs[case_eq] >> rw[]
+    >> irule invariant_add_wide_vnode_thm >> fs[eval_exp_def]
+    >> mp_tac invariant_get_or_assign_nums
+    >> metis_tac[get_vars_get_or_assign_nums_thm,cse_invariant_def,
+         get_vars_every])
+  >- (
+    Cases_on `modified` >> fs[case_eq,redun_wide_exp_def] >> rw[]
+    >> drule get_or_assign_nums_modified >> rw[]
+    >> fs[cse_invariant_def]
+    >> drule find_exp_eval_vn_thm >> rpt (disch_then drule)
+    >> disch_then (qspec_then `z2` mp_tac) >> impl_tac
+    >- (fs[eval_exp_def] >> metis_tac[get_vars_get_or_assign_nums_thm])
+    >> strip_tac
+    >> drule find_exp_eval_vn_thm >> disch_then drule
+    >> disch_then (qspec_then `lbl High` mp_tac) >> disch_then drule
+    >> disch_then (qspec_then `z1` mp_tac) >> impl_tac
+    >- (fs[eval_exp_def] >> metis_tac[get_vars_get_or_assign_nums_thm])
+    >> strip_tac
+    >> mp_tac gen_wide_prog_thm >> fs[cse_invariant_def]
+    >> disch_then drule_all >> rw[] >> qexists_tac `rloc` >> fs[] >> rw[]
+    >- metis_tac[wf_assign_thm,valid_assign_thm,eval_vn_valid_thm]
+    >- (
+      simp[cse_state_rel_def] >> reverse(rw[])
+      >- (
+        fs[get_var_set_var_thm,get_num_assign_thm] >> rw[]
+        >> metis_tac[cse_state_rel_def])
+      >> fs[get_var_set_var_thm] >> drule_all eval_var_assign_wide_thm
+      >> metis_tac[cse_state_rel_def])
+    >- (
+      fs[cse_locals_rel_def,get_num_assign_thm,set_var_def,locals_rel_def]
+      >> metis_tac[lookup_insert])));
+
+val evaluate_cse_arith = Q.prove(`
+  ∀a nums st loc temp nprog nnums.
+  every_var_inst (λx. x < temp) (Arith a) ∧
   cse_invariant temp nums st loc ⇒
-  let (res,rst) = evaluate(Assign dst exp,st) in
+  let (res,rst) = evaluate(Inst (Arith a),st) in
   if (res = SOME Error) then T else
   let
-    (nprog,nnums) = cse_assign dst exp nums;
-    (cres,rcst) = evaluate(nprog,st with locals := loc)
+    (nprog,nnums) = cse_arith a nums;
+    (cres,rcst) = case nprog of
+                    | SOME p => evaluate(p,st with locals := loc)
+                    | NONE => evaluate(Inst (Arith a),st with locals := loc)
   in
     ∃rloc.
     cres = res ∧ rcst = rst with locals := rloc ∧
     case res of
       | SOME _ => rst.locals = rloc
       | _ => cse_invariant temp nnums rst rloc`,
-  rw[cse_assign_def,every_var_def] >> pairs_tac >> Cases_on `res = SOME Error`
-  >> fs [evaluate_def,cse_invariant_def] >> qpat_x_assum `_ = (res,rst)` mp_tac
-  >> CASE_TAC >- fs []
-  >> `word_exp (st with locals := loc) exp = SOME x` by
-       metis_tac[locals_rel_word_exp,cse_locals_rel_def]
-  >> fs[] >> rw[]
-  >> qexists_tac `(set_var dst x (st with locals := loc)).locals`
-  >> rw[set_var_def]
-  >- fs[wf_unassign_thm]
-  >- metis_tac[state_unassign_thm,set_var_def]
-  >> fs[cse_locals_rel_def,locals_rel_def] >> rw[lookup_insert]);
-
-val evaluate_cse_binop_thm = Q.prove(`
-  ∀bop r1 r2 ri nums st loc temp.
-  every_var (λx. x < temp) (Inst (Arith (Binop bop r1 r2 ri))) ∧
-  cse_invariant temp nums st loc ⇒
-  let (res,rst) = evaluate(Inst (Arith (Binop bop r1 r2 ri)),st) in
-  if (res = SOME Error) then T else
-  let
-    (nprog,nnums) = cse_binop bop r1 r2 ri nums;
-    (cres,rcst) = evaluate(nprog,st with locals := loc)
-  in
-    ∃rloc.
-    cres = res ∧ rcst = rst with locals := rloc ∧
-    case res of
-      | SOME _ => rst.locals = rloc
-      | _ => cse_invariant temp nnums rst rloc`,
-  rw[cse_binop_def] >> pairs_tac >> Cases_on `res = SOME Error`
-  >> fs[cse_invariant_def,cse_locals_rel_def]
-  >> drule_all locals_rel_evaluate_thm >> strip_tac
-  >> reverse(Cases_on `res`) >- fs[evaluate_def,case_eq]
-  >> fs [evaluate_def,inst_def,assign_def,word_exp_def,case_eq] >> rw[]
-
-    (* Series of properties independent of whether ri is a var or const *)
-    (* Bulk of the complexity of this proof, due to the lack of reg_imm thms *)
-  >> `eval_exp (VOp bop) vns nnums' st = SOME (Word z)` by (
-       Cases_on `ri` >> fs[word_exp_def,case_eq]
-       >- (
-         drule the_words_get_or_assign_nums_thm
-         >> disch_then drule >> disch_then (qspec_then `[r2;n']` mp_tac)
-         >> fs[eval_exp_def,get_var_def,eval_label_def,the_words_thm,MAP_MAP_o])
-       >> imp_res_tac the_words_split
-       >> drule the_words_get_or_assign_nums_thm >> rpt (disch_then drule)
-       >> simp[eval_exp_def,get_var_def,eval_label_def,the_words_def,case_eq]
-       >> rw[] >> fs[option_seq_append,eval_vn_def])
-  >> `cse_state_rel nnums' st` by (
-       Cases_on `ri` >>
-       fs[case_eq,evaluate_def,assign_def,inst_def,word_exp_def] >> rw[]
-       >> fs[case_eq,word_exp_def] >> imp_res_tac the_words_EVERY_IS_SOME
-       >> fs[] >> imp_res_tac state_get_or_assign_nums_thm >> fs[get_var_def])
-  >> `wf_nums nnums'` by (
-       Cases_on `ri` >> fs [] >> metis_tac [wf_get_or_assign_nums_thm])
-  >> `cse_locals_rel temp nnums' st.locals loc` by (
-       rw[cse_locals_rel_def]
-       >> Cases_on `k = r1` >- fs[every_var_def,every_var_inst_def]
-       >> Cases_on `ri` >> fs[]
-       >- (
-         qspecl_then [`[r2;n']`, `k`] drule get_or_assign_nums_thm
-         >> reverse(full_case_tac) >- (metis_tac[])
-         >> fs[get_or_assign_nums_def] >> pairs_tac >> rw[]
-         >> fs[every_var_def,every_var_inst_def,every_var_imm_def])
-       >> qspecl_then [`[r2]`, `k`] drule get_or_assign_nums_thm
-       >> reverse(full_case_tac) >- (metis_tac[])
-       >> fs[get_or_assign_nums_def] >> pairs_tac >> rw[]
-       >> fs[every_var_def,every_var_inst_def,every_var_imm_def])
-  >> fs[evaluate_def,inst_def,assign_def,word_exp_def,case_eq]
-
-  >- ((* no redundancy *)
-    qexists_tac `loc'` >> rw[]
+  rw[] >> pairs_tac >> Cases_on `res = SOME Error` >> fs[]
+  >> `locals_rel temp st.locals loc` by fs[cse_invariant_def,cse_locals_rel_def]
+  >> drule locals_rel_evaluate_thm >> fs[every_var_def]
+  >> disch_then drule_all >> strip_tac >> fs[] >> Cases_on `a`
+  >- ( (* Binop *)
+    Cases_on `r`
     >- (
-      irule wf_add_vnode_thm >> Cases_on `ri` >> fs[] >> rw[valid_def]
-      >> metis_tac[valid_get_or_assign_nums_thm])
-    >- metis_tac[state_add_vnode_thm]
-    >> fs[every_var_def,every_var_inst_def]
-    >> metis_tac[cse_locals_rel_def,get_num_add_vnode_thm])
-
-  >- ((* redundancy *)
-    fs [redun_exp_def] >> drule_all find_exp_eval_vn_thm >> strip_tac
-    >> mp_tac gen_prog_thm >> fs[cse_invariant_def]
-    >> disch_then drule_all >> strip_tac >> fs[]
-    >> qexists_tac `rloc` >> rw[set_var_def,lookup_insert]
-    >- metis_tac[wf_assign_thm,eval_vn_valid_thm]
-    >- metis_tac[state_assign_thm,eval_vn_valid_thm,set_var_def]
+      fs[cse_arith_def,evaluate_def,inst_def,case_eq,assign_def,word_exp_def]
+      >> rw[] >> fs[every_var_inst_def,every_var_imm_def]
+      >> drule cse_exp_thm >> rpt (disch_then drule)
+      >> fs[get_vars_def,get_var_def,the_words_def,case_eq,eval_label_def,
+           MAP_MAP_o,fold_def,the_words_def]
+      >> rw[] >> fs[locals_rel_def,set_var_def,state_component_equality]
+      >> rw[] >> res_tac >> fs[])
     >- (
-      fs[every_var_def,every_var_inst_def]
-      >> metis_tac[cse_locals_rel_def,get_num_assign_thm])
-    >> fs[locals_rel_def,lookup_insert]));
+      fs[cse_arith_def,evaluate_def,inst_def,case_eq,assign_def,word_exp_def]
+      >> rw[] >> fs[every_var_inst_def,every_var_imm_def]
+      >> drule cse_const_exp_thm >> rpt (disch_then drule)
+      >> fs[get_vars_def,get_var_def,the_words_def,case_eq,eval_label_def,
+           MAP_MAP_o,fold_def,the_words_def]
+      >> rw[] >> fs[locals_rel_def,set_var_def,state_component_equality]
+      >> rw[] >> res_tac >> fs[]))
+
+  >- ( (* Shift *)
+    fs[cse_arith_def,evaluate_def,inst_def,case_eq,assign_def,word_exp_def]
+    >> rw[] >> fs[every_var_inst_def]
+    >> drule cse_exp_thm >> rpt (disch_then drule)
+    >> fs[get_vars_def,get_var_def,the_words_def,case_eq,eval_label_def,
+         MAP_MAP_o,fold_def,the_words_def]
+    >> rw[] >> fs[locals_rel_def,set_var_def,state_component_equality]
+    >> rw[] >> res_tac >> fs[])
+ 
+  >- ( (* Div *)
+    fs[cse_arith_def,evaluate_def,inst_def,case_eq,assign_def,word_exp_def]
+    >> rw[] >> fs[every_var_inst_def]
+    >> drule cse_exp_thm >> rpt (disch_then drule)
+    >> fs[get_vars_def,get_var_def,the_words_def,case_eq,eval_label_def,
+         MAP_MAP_o,fold_def,the_words_def]
+    >> rw[] >> fs[locals_rel_def,set_var_def,state_component_equality]
+    >> res_tac >> rfs[] >> rw[])
+
+  >- ( (* LongMul *)
+    fs[cse_arith_def,evaluate_def,inst_def,case_eq,assign_def,word_exp_def]
+    >> rw[] >> fs[every_var_inst_def]
+    >> drule cse_wide_exp_thm >> rpt (disch_then drule)
+    >> fs[get_vars_def,get_var_def,the_words_def,case_eq,eval_label_def,
+         MAP_MAP_o,fold_def,the_words_def]
+    >> rw[] >> fs[locals_rel_def,set_var_def,state_component_equality]
+    >> res_tac >> rfs[] >> rw[])
+
+  >- ( (* LongDiv *)
+    fs[cse_arith_def,evaluate_def,inst_def,case_eq,assign_def,word_exp_def]
+    >> rw[] >> fs[every_var_inst_def]
+    >> drule cse_wide_exp_thm >> rpt (disch_then drule)
+    >> fs[get_vars_def,get_var_def,the_words_def,case_eq,eval_label_def,
+         MAP_MAP_o,fold_def,the_words_def]
+    >> rw[] >> fs[locals_rel_def,set_var_def,state_component_equality]
+    >> res_tac >> rfs[] >> rw[])
+
+  >- ( (* AddCarry *)
+    fs[cse_arith_def,evaluate_def,inst_def,case_eq,assign_def,word_exp_def]
+    >> rw[] >> fs[every_var_inst_def]
+    >> drule cse_wide_exp_thm >> rpt (disch_then drule)
+    >> fs[get_vars_def,get_var_def,the_words_def,case_eq,eval_label_def,
+         MAP_MAP_o,fold_def,the_words_def]
+    >> rw[] >> fs[locals_rel_def,set_var_def,state_component_equality]
+    >> res_tac >> rfs[] >> rw[])
+
+  >- ( (* AddOverflow *)
+    fs[cse_arith_def,evaluate_def,inst_def,case_eq,assign_def,word_exp_def]
+    >> rw[] >> fs[every_var_inst_def]
+    >> drule cse_wide_exp_thm >> rpt (disch_then drule)
+    >> fs[get_vars_def,get_var_def,the_words_def,case_eq,eval_label_def,
+         MAP_MAP_o,fold_def,the_words_def]
+    >> rw[] >> fs[locals_rel_def,set_var_def,state_component_equality]
+    >> res_tac >> rfs[] >> rw[])
+
+  >- ( (* SubOverflow *)
+    fs[cse_arith_def,evaluate_def,inst_def,case_eq,assign_def,word_exp_def]
+    >> rw[] >> fs[every_var_inst_def]
+    >> drule cse_wide_exp_thm >> rpt (disch_then drule)
+    >> fs[get_vars_def,get_var_def,the_words_def,case_eq,eval_label_def,
+         MAP_MAP_o,fold_def,the_words_def]
+    >> rw[] >> fs[locals_rel_def,set_var_def,state_component_equality]
+    >> res_tac >> rfs[] >> rw[]));
 
 val evaluate_cse_inst_thm = Q.prove(`
   ∀i nums st loc temp.
@@ -1835,25 +2269,15 @@ val evaluate_cse_inst_thm = Q.prove(`
       | _ => cse_invariant temp nnums rst rloc`,
   rw[] >> pairs_tac >> Cases_on `i` >> fs[cse_inst_def] >> rw[]
   >- (fs[evaluate_def,case_eq,inst_def] >> rw[] >> metis_tac[])
-
   >- ( (* Const *)
     fs[evaluate_def,case_eq,inst_def,assign_def,word_exp_def] >> rw[]
-    >> qexists_tac `insert n (Word c) loc` >> fs[cse_invariant_def] >> rw[]
-    >- fs[set_var_def]
-    >- fs[wf_assign_thm,valid_def]
-    >- fs[set_var_def,state_assign_thm,eval_vn_def]
-    >> fs[cse_locals_rel_def,set_var_def,locals_rel_def,lookup_insert] >> rw[]
-    >> fs[every_var_def,every_var_inst_def] >> metis_tac[get_num_assign_thm])
-
+    >> qexists_tac `insert n (Word c) loc` >> rw[] >- fs[set_var_def]
+    >> irule invariant_assign_thm
+    >> fs[every_var_def,every_var_inst_def,eval_vn_def]
+    >> metis_tac[locals_rel_def])
   >- ( (* Arith *)
-    Cases_on `a` >> fs[cse_arith_def] >> rw[]
-    >- (drule_all evaluate_cse_binop_thm >> fs[]) >> rw[]
-    >> Cases_on `res = SOME Error` >> fs[cse_invariant_def,cse_locals_rel_def]
-    >> drule_all locals_rel_evaluate_thm >> strip_tac >> qexists_tac `loc'`
-    >> Cases_on `cres` >> fs[] >> rw[] >> fs[wf_unassign_thm]
-    >> fs[evaluate_def,case_eq,inst_def,assign_def]
-    >> metis_tac[state_unassign_thm,wf_unassign_thm])
-
+    pairs_tac >> fs[every_var_def] >> drule_all evaluate_cse_arith >> fs[]
+    >> pairs_tac >> Cases_on `np` >> rw[] >> fs[] >> metis_tac[])
   >- ( (* Mem *)
     Cases_on `m` >> fs[cse_mem_def] >> rw[]
     >> Cases_on `res = SOME Error` >> fs[cse_invariant_def,cse_locals_rel_def]
@@ -1861,8 +2285,8 @@ val evaluate_cse_inst_thm = Q.prove(`
     >> Cases_on `cres` >> fs[] >> rw[] >> fs[wf_unassign_thm]
     >> fs[evaluate_def,case_eq,inst_def,assign_def,mem_store_def]
     >> fs[mem_load_def,mem_store_byte_aux_def,case_eq,state_component_equality]
-    >> metis_tac[cse_state_locals_thm,state_unassign_thm,wf_unassign_thm]) 
-
+    >> fs[get_num_unassign_thm,IS_SOME_EXISTS]
+    >> metis_tac[cse_state_locals_thm,state_unassign_thm,wf_unassign_thm])
   >- ((* FP *)
     Cases_on `f` >> fs[cse_fp_def] >> rw[]
     >> Cases_on `res = SOME Error` >> fs[cse_invariant_def,cse_locals_rel_def]
@@ -1871,7 +2295,35 @@ val evaluate_cse_inst_thm = Q.prove(`
     >> fs[evaluate_def,case_eq,inst_def,assign_def]
     >> Cases_on `dimindex (:α) = 64` >> pairs_tac
     >> fs[set_fp_var_def,case_eq,state_component_equality]
+    >> fs[get_num_unassign_thm,IS_SOME_EXISTS]
     >> metis_tac[cse_state_locals_thm,state_unassign_thm,wf_unassign_thm]));
+
+val cse_inst_cases_thm = Q.prove(`
+  ∀dst vn nums nnums nprog i.
+  cse_inst i nums = (nprog,nnums) ⇒
+  nprog = Inst i ∨ redun_replace nprog ∨
+  (∃p1 p2. nprog = Seq p1 p2 ∧ redun_replace p1 ∧ redun_replace p2)`,
+  rw[] >> Cases_on `i` >> fs[cse_inst_def] >> pairs_tac >> rw[]
+  >> Cases_on `np` >> fs[]
+  >- (
+    Cases_on `a`
+    >- (
+      Cases_on `r` >> fs[cse_arith_def,cse_exp_def,cse_const_exp_def]
+      >> pairs_tac >> every_case_tac >> fs[redun_exp_def]
+      >> drule gen_prog_cases_thm >> rw[redun_replace_def])
+    >- (
+      fs[cse_arith_def,cse_exp_def] >> pairs_tac
+      >> every_case_tac >> fs[redun_exp_def] >> drule gen_prog_cases_thm
+      >> rw[redun_replace_def])
+    >- (
+      fs[cse_arith_def,cse_exp_def] >> pairs_tac
+      >> every_case_tac >> fs[redun_exp_def] >> drule gen_prog_cases_thm
+      >> rw[redun_replace_def])
+    >> fs[cse_arith_def,cse_wide_exp_def,redun_wide_exp_def] >> pairs_tac
+    >> every_case_tac >> fs[] >> pairs_tac
+    >> imp_res_tac gen_wide_prog_cases_thm >> rw[redun_replace_def])
+  >- (pairs_tac >> Cases_on `m` >> fs[cse_mem_def] >> rw[])
+  >- (pairs_tac >> Cases_on `f` >> fs[cse_fp_def] >> rw[]));
 
 val evaluate_cse_loop = Q.store_thm("evaluate_cse_loop", `
   ∀prog nums st loc temp.
@@ -1888,16 +2340,21 @@ val evaluate_cse_loop = Q.store_thm("evaluate_cse_loop", `
     case res of
       | SOME _ => rst.locals = rloc
       | _ => cse_invariant temp nnums rst rloc`,
-  recInduct cse_loop_ind>>rpt conj_tac
+  recInduct cse_loop_ind >> rpt conj_tac
   >- (mp_tac evaluate_cse_move_thm >> fs[cse_loop_def,every_var_def])
-  >- (mp_tac evaluate_cse_assign_thm >> fs[cse_loop_def]) 
+  >- ((* Assign *)
+    rw[cse_loop_def] >> pairs_tac >> fs[evaluate_def,case_eq] >> rw[]
+    >> fs[every_var_def] >> drule locals_rel_word_exp
+    >> disch_then (qspecl_then [`st`, `w`] mp_tac)
+    >- fs[cse_invariant_def,cse_locals_rel_def]
+    >> impl_tac >- fs[cse_invariant_def,cse_locals_rel_def]
+    >> rw[] >> fs[set_var_def,state_component_equality]
+    >> metis_tac[invariant_unassign_thm,set_var_def])
   >- (mp_tac evaluate_cse_inst_thm >> fs[cse_loop_def])
-
   >- ((* Get *)
-    rw[cse_loop_def,cse_get_def] >> pairs_tac >> fs[evaluate_def]
+    rw[cse_loop_def] >> pairs_tac >> fs[evaluate_def]
     >> every_case_tac >> fs[] >> rw[set_var_def,state_component_equality]
     >> metis_tac [invariant_unassign_thm,set_var_def])
-
   >- ((* LocValue *)
     rw[cse_loop_def] >> pairs_tac >> fs[evaluate_def]
     >> every_case_tac >> fs[] >> rw[set_var_def,state_component_equality]
@@ -2051,29 +2508,15 @@ val cse_loop_wf_cutsets_thm = Q.store_thm("cse_loop_wf_cutsets",
     wf_cutsets p ∧
     cse_loop p nums = (np, nnums) ⇒
     wf_cutsets np`,
-  recInduct cse_loop_ind >> rpt conj_tac
-  >> fs [wf_cutsets_def, cse_loop_def]
+  recInduct cse_loop_ind >> rpt conj_tac >> fs [wf_cutsets_def, cse_loop_def]
   (* Move *)
   >- fs [cse_move_def, wf_cutsets_def]
-  (* Assign *)
-  >- fs [cse_assign_def, wf_cutsets_def]
   (* Inst *)
   >- (
-    rw[]>>Cases_on `i`>>fs[cse_inst_def]
-    >- rw [wf_cutsets_def]
-    >- rw [wf_cutsets_def]
-    >- (
-      Cases_on `a`>>fs[cse_arith_def,cse_binop_def]
-      >- (
-        rpt(pairarg_tac>>fs[])>>
-        every_case_tac>>rw[]>>rw[wf_cutsets_def]>>
-        fs[redun_exp_def]>>imp_res_tac gen_prog_cases_thm>>
-        rw[wf_cutsets_def])
-      >> rw [wf_cutsets_def])
-    >- (Cases_on `m`>>fs[cse_mem_def]>>rw[wf_cutsets_def])
-    >- (Cases_on `f`>>fs[cse_fp_def]>>rw[wf_cutsets_def]))
-  (* Get *)
-  >- fs [cse_get_def, wf_cutsets_def]
+    rw[] >> drule cse_inst_cases_thm >> rw[]
+    >- rw[wf_cutsets_def]
+    >- (Cases_on `np` >> fs[redun_replace_def,wf_cutsets_def])
+    >> Cases_on `p1` >> Cases_on `p2` >> fs[redun_replace_def,wf_cutsets_def])
   (* Must Terminate *)
   >- (rw [] >> pairarg_tac >> fs [] >> rw [wf_cutsets_def])
   (* Seq *)
@@ -2099,28 +2542,18 @@ val cse_loop_distinct_tar_reg_thm = Q.prove(`
     every_inst distinct_tar_reg p ∧
     cse_loop p nums = (np, nnums) ⇒
     every_inst distinct_tar_reg np`,
-  recInduct cse_loop_ind >> rpt conj_tac
-  >> fs [every_inst_def, cse_loop_def]
+  recInduct cse_loop_ind >> rpt conj_tac >> fs [every_inst_def, cse_loop_def]
   (* Move *)
   >- fs [cse_move_def, every_inst_def]
-  (* Assign *)
-  >- fs [cse_assign_def, every_inst_def]
   >- ((* Inst *)
-    rw[]>>Cases_on `i`>>fs[cse_inst_def]
-    >- rw [every_inst_def]
-    >- rw [every_inst_def]
+    rw[] >> drule cse_inst_cases_thm >> rw[]
+    >- rw[every_inst_def]
     >- (
-      Cases_on `a`>> fs [cse_arith_def,cse_binop_def]
-      >- (
-        rpt(pairarg_tac>>fs[])>>
-        every_case_tac>>rw[]>>rw[every_inst_def]>>
-        fs[redun_exp_def]>>imp_res_tac gen_prog_cases_thm>>
-        rw[every_inst_def,distinct_tar_reg_def])
-      >> rw [every_inst_def])
-    >- (Cases_on `m` >> fs [cse_mem_def] >> rw [every_inst_def])
-    >- (Cases_on `f` >> fs [cse_fp_def] >> rw [every_inst_def]))
-  (* Get *)
-  >- fs [cse_get_def, every_inst_def]
+      Cases_on `np` >>fs[redun_replace_def,every_inst_def]
+      >> Cases_on `i'` >> fs[redun_replace_def,distinct_tar_reg_def])
+    >> Cases_on `p1` >> Cases_on `p2` >> fs[redun_replace_def,every_inst_def]
+    >> Cases_on `i'` >> fs[redun_replace_def,distinct_tar_reg_def]
+    >> Cases_on `i''` >> fs[redun_replace_def,distinct_tar_reg_def])
   (* Must Terminate *)
   >- (rw [] >> pairarg_tac >> fs [] >> rw [every_inst_def])
   (* Seq *)
@@ -2143,29 +2576,15 @@ val cse_loop_extract_labels_thm = Q.prove(`
   ∀p nums np nnums.
     cse_loop p nums = (np, nnums) ⇒
     extract_labels p = extract_labels np`,
-  recInduct cse_loop_ind >> rpt conj_tac
-  >> fs [extract_labels_def, cse_loop_def]
+  recInduct cse_loop_ind >> rpt conj_tac >> fs [extract_labels_def,cse_loop_def]
   (* Move *)
   >- fs [cse_move_def, extract_labels_def]
-  (* Assign *)
-  >- fs [cse_assign_def, extract_labels_def]
   >- ((* Inst *)
-    rw[]>>Cases_on `i`>>fs[cse_inst_def]
-    >- rw [extract_labels_def]
-    >- rw [extract_labels_def]
-    >- (
-      Cases_on `a`>> fs [cse_arith_def,cse_binop_def]
-      >- (
-        rpt(pairarg_tac>>fs[])>>
-        every_case_tac>>rw[]>>rw[extract_labels_def]>>
-        fs[redun_exp_def]>>imp_res_tac gen_prog_cases_thm>>
-        rw[extract_labels_def])
-      >> rw [extract_labels_def]
-      )
-    >- (Cases_on `m`>>fs[cse_mem_def]>>rw[extract_labels_def])
-    >- (Cases_on `f`>>fs[cse_fp_def]>>rw[extract_labels_def]))
-  (* Get *)
-  >- fs [cse_get_def, extract_labels_def]
+    rw[] >> drule cse_inst_cases_thm >> rw[]
+    >- rw[extract_labels_def]
+    >- (Cases_on `np` >> fs[redun_replace_def,extract_labels_def])
+    >> Cases_on `p1` >> Cases_on `p2`
+    >> fs[redun_replace_def,extract_labels_def])
   (* Must Terminate *)
   >- (rw [] >> pairarg_tac >> fs [] >> rw [extract_labels_def])
   (* Seq *)
@@ -2194,21 +2613,11 @@ val cse_loop_flat_exp_conventions_thm = Q.prove(`
   (* Move *)
   >- fs [cse_move_def, flat_exp_conventions_def]
   >- ((* Inst *)
-    rw[]>>Cases_on `i`>>fs[cse_inst_def]
-    >- rw [flat_exp_conventions_def]
-    >- rw [flat_exp_conventions_def]
-    >- (
-      Cases_on `a`>> fs [cse_arith_def,cse_binop_def]
-      >- (
-        rpt(pairarg_tac>>fs[])>>
-        every_case_tac>>rw[]>>rw[flat_exp_conventions_def]>>
-        fs[redun_exp_def]>>imp_res_tac gen_prog_cases_thm>>
-        rw[flat_exp_conventions_def])
-      >> rw [flat_exp_conventions_def])
-    >- (Cases_on `m`>>fs[cse_mem_def]>>rw[flat_exp_conventions_def])
-    >- (Cases_on `f`>>fs[cse_fp_def]>>rw[flat_exp_conventions_def]))
-  (* Get *)
-  >- fs [cse_get_def, flat_exp_conventions_def]
+    rw[] >> drule cse_inst_cases_thm >> rw[]
+    >- rw[flat_exp_conventions_def]
+    >- (Cases_on `np` >> fs[redun_replace_def,flat_exp_conventions_def])
+    >> Cases_on `p1` >> Cases_on `p2`
+    >> fs[redun_replace_def,flat_exp_conventions_def])
   (* Must Terminate *)
   >- (rw [] >> pairarg_tac >> fs [] >> rw [flat_exp_conventions_def])
   (* Seq *)
@@ -2237,21 +2646,19 @@ val cse_loop_pre_alloc_conventions_thm = Q.prove(`
   >-
   (fs [cse_move_def] >> rw [pre_alloc_conventions_def]
   >> fs [call_arg_convention_def, every_stack_var_def])
-  (* Assign *)
-  >- fs [cse_assign_def]
   >- ((* Inst *)
-    rw[]>>Cases_on `i`>>fs[cse_inst_def]
+    rw[] >> drule cse_inst_cases_thm >> rw[]
+    >- rw[]
     >- (
-      Cases_on `a`>>fs[cse_arith_def,cse_binop_def]>>
-      rpt(pairarg_tac>>fs[])>>
-      every_case_tac>>rw[]>>rw[]>>
-      fs[redun_exp_def]>>imp_res_tac gen_prog_cases_thm>>
-      rw[pre_alloc_conventions_def,every_stack_var_def,
-        call_arg_convention_def,inst_arg_convention_def])
-    >- (Cases_on `m`>>fs[cse_mem_def]>>rw[])
-    >- (Cases_on `f`>>fs[cse_fp_def]>>rw[]))
-  (* Get *)
-  >- fs [cse_get_def]
+      Cases_on `np` >> fs[redun_replace_def,pre_alloc_conventions_def,
+        every_stack_var_def,call_arg_convention_def]
+      >> Cases_on `i'` >> fs[inst_arg_convention_def,redun_replace_def])
+    >> Cases_on `p1` >> fs[redun_replace_def,pre_alloc_conventions_def,
+         every_stack_var_def,call_arg_convention_def]
+    >> Cases_on `p2` >> fs[redun_replace_def,pre_alloc_conventions_def,
+         every_stack_var_def,call_arg_convention_def]
+    >> Cases_on `i'` >> fs[inst_arg_convention_def,redun_replace_def]
+    >> Cases_on `i''` >> fs[inst_arg_convention_def,redun_replace_def])
   (* Must Terminate *)
   >- 
   (pairarg_tac >> fs [] >> rw []
@@ -2287,32 +2694,22 @@ val cse_loop_full_inst_ok_less_thm = Q.prove(`
   recInduct cse_loop_ind >> rw [cse_loop_def] >> fs []
   (* Move *)
   >- (fs [cse_move_def] >> rw [] >> fs [full_inst_ok_less_def])
-  (* Assign *)
-  >- fs [cse_assign_def]
   >- ((* Inst *)
-    rw[]>>Cases_on `i`>>fs[cse_inst_def]
+    rw[] >> drule cse_inst_cases_thm >> rw[]
+    >- rw[]
     >- (
-      Cases_on `a`>> fs [cse_arith_def,cse_binop_def]>>
-      rpt(pairarg_tac>>fs[])>>
-      every_case_tac>>rw[]>>rw[]>>
-      fs[redun_exp_def]>>imp_res_tac gen_prog_cases_thm>>
-      rw[full_inst_ok_less_def,inst_ok_less_def])
-    >- (Cases_on `m`>>fs[cse_mem_def]>>rw[])
-    >- (Cases_on `f`>>fs[cse_fp_def]>>rw[]))
-  (* Get *)
-  >- fs [cse_get_def]
+      Cases_on `np` >> fs[redun_replace_def,full_inst_ok_less_def]
+      >> Cases_on `i'` >> fs[inst_ok_less_def,redun_replace_def])
+    >> Cases_on `p1` >> Cases_on `p2`
+    >> fs[redun_replace_def,full_inst_ok_less_def]
+    >> Cases_on `i'` >> fs[inst_ok_less_def,redun_replace_def]
+    >> Cases_on `i''` >> fs[inst_ok_less_def,redun_replace_def])
   (* Must Terminate *)
-  >- 
-  (pairarg_tac >> fs [] >> rw []
-  >> fs [full_inst_ok_less_def])
+  >- (pairs_tac >> rw[] >> fs[full_inst_ok_less_def])
   (* Seq *)
-  >-
-  (rpt (pairarg_tac >> fs []) >> rw []
-  >> fs [full_inst_ok_less_def])
+  >- (pairs_tac >> rw[] >> fs[full_inst_ok_less_def])
   (* If *)
-  >-
-  (rpt (pairarg_tac >> fs []) >> rw []
-  >> fs [full_inst_ok_less_def])
+  >- (pairs_tac >> rw[] >> fs[full_inst_ok_less_def])
   >- (* Call *)
   (qpat_x_assum `_ = (np,nnums)` mp_tac
   >> TOP_CASE_TAC >- (rw [] >> fs [])
