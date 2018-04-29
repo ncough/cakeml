@@ -442,7 +442,7 @@ val cse_fp_def = Define `
 val cse_mem_def = Define `
   (cse_mem Load r a nums = (NONE, unassign_num r nums)) ∧
   (cse_mem Load8 r a nums = (NONE, unassign_num r nums)) ∧
-  (cse_mem memop r a (nums :α vnumbering) = (NONE :α prog option, nums))`;
+  (cse_mem memop r (a:α addr) (nums :α vnumbering) = (NONE :α prog option, nums))`;
 
 val cse_inst_def = Define `
   (cse_inst Skip nums = (Inst (asm$Skip), nums)) ∧
