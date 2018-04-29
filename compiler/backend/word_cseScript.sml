@@ -297,23 +297,31 @@ val gen_wide_prog_def = Define `
 (* Attempt to match/fold the expression and generate a replacement prog *)
 val redun_exp_def = Define `
   redun_exp label dst vns nums =
-    do
-      vn <- find_exp label vns nums;
-      prog <- gen_prog dst vn nums;
-      _ <- SOME (log_event (RedunOp prog));
-      SOME (prog, assign_num dst vn nums)
-    od`;
+    case find_exp label vns nums of
+      | SOME vn =>
+          case gen_prog dst vn nums of
+            | SOME nprog => let _ = log_event (RedunOp nprog) in
+                            SOME(SOME nprog, assign_num dst vn nums)
+            | NONE => SOME(NONE, assign_num dst vn nums)
+      | NONE => NONE`
 
 val redun_wide_exp_def = Define `
   redun_wide_exp lbl dst1 dst2 vns nums =
-    do
-      vn1 <- find_exp (lbl High) vns nums;
-      vn2 <- find_exp (lbl Low) vns nums;
-      prog <- gen_wide_prog dst1 dst2 vn1 vn2 nums;
-      _ <- SOME (log_event (RedunOp prog));
-      SOME (prog, assign_num dst2 vn2 (assign_num dst1 vn1 nums))
-    od`;
-
+    let
+      dsts = do
+               vn1 <- find_exp (lbl High) vns nums;
+               vn2 <- find_exp (lbl Low) vns nums;
+               SOME(vn1,vn2)
+             od
+    in
+      case dsts of
+        | SOME (vn1, vn2) =>
+            case gen_wide_prog dst1 dst2 vn1 vn2 nums of
+              | SOME nprog => let _ = log_event (RedunOp nprog) in
+                              SOME(SOME nprog, assign_num dst2 vn2 (assign_num dst1 vn1 nums))
+              | NONE => SOME(NONE, assign_num dst2 vn2 (assign_num dst1 vn1 nums))
+        | NONE => NONE`;
+ 
 (*
  * Add a new node to the graph
  * The node is added with its uses and operands. These won't be modified again.
@@ -375,7 +383,7 @@ val cse_exp_def = Define `
     let (vns,nnums,modified) = get_or_assign_nums args nums in
     if modified then (NONE, add_vnode lbl dst vns nnums)
     else case redun_exp lbl dst vns nnums of
-      | SOME (nprog,n) => (SOME nprog,n)
+      | SOME n => n
       | NONE => (NONE, add_vnode lbl dst vns nnums)`;
 
 val cse_const_exp_def = Define `
@@ -386,7 +394,7 @@ val cse_const_exp_def = Define `
     in
       if modified then (NONE, add_vnode lbl dst vns nnums)
       else case redun_exp lbl dst vns nnums of
-        | SOME (nprog,n) => (SOME nprog,n)
+        | SOME n => n
         | NONE => (NONE, add_vnode lbl dst vns nnums)`;
 
 val cse_wide_exp_def = Define `
@@ -397,7 +405,7 @@ val cse_wide_exp_def = Define `
     in
       if modified then (NONE,fnums)
       else case redun_wide_exp lbl dst1 dst2 vns nums of
-        | SOME (nprog,n) => (SOME nprog,n)
+        | SOME n => n
         | NONE => (NONE,fnums)`;
 
 
