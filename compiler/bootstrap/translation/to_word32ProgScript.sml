@@ -487,7 +487,7 @@ val _ = save_thm ("comp_ind",data_to_wordTheory.comp_ind|> conv32|> wcomp_simp)
 (* Inlines the let k = 8 manually *)
 val _ = translate (comp_def |> conv32 |> wcomp_simp |> conv32 |> SIMP_RULE std_ss[LET_THM |> INST_TYPE [alpha|->``:num``]]);
 
-open word_cseTheory
+open word_simpTheory word_allocTheory word_instTheory word_cseTheory
 
 val _ = matches:= [``foo:'a wordLang$prog``,``foo:'a wordLang$exp``,``foo:'a word``,``foo: 'a reg_imm``,``foo:'a arith``,``foo: 'a addr``]
 
@@ -499,59 +499,6 @@ val rws = Q.prove(`
   fs[FUN_EQ_THM])
 
 val _ = translate (wordLangTheory.word_op_def |> ONCE_REWRITE_RULE [rws,WORD_NOT_0] |> spec32 |> gconv)
-
-val suc_fupd = Q.prove(`
-  nums with <| next updated_by SUC |> =
-  nums with <| next := (nums.next + 1) |>`,
-  fs [vnumbering_component_equality]);
-
-val _ = translate (log_event_def |> conv32);
-val _ = translate (initial_vn_def |> conv32);
-val _ = translate (delete_held_def |> conv32);
-val _ = translate (insert_held_def |> conv32);
-val _ = translate (insert_use_def |> conv32);
-val _ = translate (get_num_def |> conv32);
-val _ = translate (get_nums_def |> conv32);
-val _ = translate (unassign_num_def |> conv32);
-val _ = translate (assign_num_def |> conv32);
-val _ = translate (assign_nums_def |> conv32);
-val _ = translate (get_moves_def |> conv32);
-val _ = translate (redun_move_def |> conv32);
-val _ = translate (cse_move_def |> conv32);
-val _ = translate (all_const_def |> conv32);
-val _ = translate (fold_def |> conv32);
-val _ = translate (attempt_fold_def |> conv32);
-val _ = translate (compare_exp_def |> conv32);
-val _ = translate (inter_uses_def |> conv32);
-val _ = translate (attempt_match_def |> conv32);
-val _ = translate (find_exp_def |> conv32);
-val _ = translate (pick_source_def |> conv32);
-val _ = translate (gen_move_def |> conv32);
-val _ = translate (gen_wide_move_def |> conv32);
-val _ = translate (gen_prog_def |> conv32);
-val _ = translate (gen_wide_prog_def |> conv32);
-val _ = translate (redun_exp_def |> conv32);
-val _ = translate (redun_wide_exp_def |> conv32);
-val _ = translate (add_uses_def |> conv32);
-val _ = translate (add_empty_vnode_def |> RW[suc_fupd] |> conv32 |> econv);
-val _ = translate (add_vnode_def |> conv32);
-val _ = translate (add_wide_vnode_def |> conv32);
-val _ = translate (get_or_assign_num_def |> conv32);
-val _ = translate (get_or_assign_nums_def |> conv32);
-val _ = translate (cse_exp_def |> conv32);
-val _ = translate (cse_const_exp_def |> conv32);
-val _ = translate (cse_wide_exp_def |> conv32);
-val _ = translate (cse_arith_def |> conv32);
-val _ = translate (cse_fp_def |> conv32);
-val _ = translate (cse_mem_def |> conv32);
-val _ = translate (cse_inst_def |> conv32);
-val _ = translate (merge_vnums_def |> conv32);
-val _ = translate (cse_loop_def |> conv32);
-val _ = translate (cse_def |> conv32);
-
-open word_simpTheory word_allocTheory word_instTheory
-
-val _ = translate (const_fp_inst_cs_def |> spec32 |> econv)
 
 val word_msb_rw = Q.prove(
   `word_msb (a:word32) ⇔ (a>>>31) <> 0w`,
@@ -579,6 +526,77 @@ val res = translate (wordLangTheory.word_sh_def
   |> RW[shift_left_rwt,shift_right_rwt,arith_shift_right_rwt]  );
 
 val _ = translate (asmTheory.word_cmp_def |> REWRITE_RULE[WORD_LO,WORD_LT] |> spec32 |> REWRITE_RULE[word_msb_rw]);
+
+val _ = translate (word_quot_def |> conv32 |> we_simp |> wcomp_simp |> SIMP_RULE (srw_ss()) []);
+
+val suc_next_fupd = Q.prove(`
+  nums with <| next updated_by SUC |> =
+  nums with <| next := (nums.next + 1) |>`,
+  fs [vnumbering_component_equality]);
+
+val suc_memnum_fupd = Q.prove(`
+  nums with <| memnum updated_by SUC |> =
+  nums with <| memnum := (nums.memnum + 1) |>`,
+  fs [vnumbering_component_equality]);
+
+val _ = translate (log_event_def |> conv32);
+val _ = translate (initial_vn_def |> conv32);
+val _ = translate (delete_held_def |> conv32);
+val _ = translate (insert_held_def |> conv32);
+val _ = translate (insert_use_def |> conv32);
+val _ = translate (get_num_def |> conv32);
+val _ = translate (get_nums_def |> conv32);
+val _ = translate (unassign_num_def |> conv32);
+val _ = translate (assign_num_def |> conv32);
+val _ = translate (assign_nums_def |> conv32);
+val _ = translate (get_moves_def |> conv32);
+val _ = translate (redun_move_def |> conv32);
+val _ = translate (cse_move_def |> conv32);
+val _ = translate (all_const_def |> conv32);
+
+val res = translate_no_ind (fold_def |> conv32 |> wcomp_simp |> SIMP_RULE (srw_ss()) []);
+val _ = Q.prove(
+  `∀x y. word_cse_fold_side x y ⇔ T`,
+  fs[fetch "-" "word_cse_fold_side_def",
+     fetch "-" "words_word_quot_side_def",
+     fetch "-" "words_word_div_side_def"]
+  >> `0xFFFFFFFFw = -1w:word32` by fs[] >> rw[])
+  |> update_precondition;
+
+val _ = translate (attempt_fold_def |> conv32);
+val _ = translate (compare_exp_def |> conv32);
+val _ = translate (inter_uses_def |> conv32);
+val _ = translate (attempt_match_def |> conv32);
+val _ = translate (find_exp_def |> conv32);
+val _ = translate (pick_source_def |> conv32);
+val _ = translate (gen_move_def |> conv32);
+val _ = translate (gen_wide_move_def |> conv32);
+val _ = translate (gen_prog_def |> conv32);
+val _ = translate (gen_wide_prog_def |> conv32);
+val _ = translate (redun_exp_def |> conv32);
+val _ = translate (redun_wide_exp_def |> conv32);
+val _ = translate (add_uses_def |> conv32);
+val _ = translate (add_empty_vnode_def |> RW[suc_next_fupd] |> conv32 |> econv);
+val _ = translate (add_vnode_def |> conv32);
+val _ = translate (add_wide_vnode_def |> conv32);
+val _ = translate (get_or_assign_num_def |> conv32);
+val _ = translate (get_or_assign_nums_def |> conv32);
+val _ = translate (cse_exp_def |> conv32);
+val _ = translate (cse_const_exp_def |> conv32);
+val _ = translate (cse_wide_exp_def |> conv32);
+val _ = translate (cse_arith_def |> conv32);
+val _ = translate (cse_fp_def |> conv32);
+val _ = translate (cse_mem_def |> RW[suc_memnum_fupd] |> conv32 |> econv);
+val _ = translate (cse_inst_def |> conv32);
+val _ = translate (merge_vnums_def |> conv32);
+val _ = translate (gc_prune_def |> conv32);
+val _ = translate (fold_cmp_def |> conv32);
+val _ = translate (cse_get_def |> conv32);
+val _ = translate (cse_set_def |> conv32);
+val _ = translate (cse_loop_def |> conv32);
+val _ = translate (cse_def |> conv32);
+
+val _ = translate (const_fp_inst_cs_def |> spec32 |> econv)
 
 (* TODO: remove when pmatch is fixed *)
 val _ = translate (spec32 const_fp_loop_def)

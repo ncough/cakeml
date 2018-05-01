@@ -29,6 +29,8 @@ val _ = Datatype `
       | VAddCarry wideop
       | VAddOverflow wideop
       | VSubOverflow wideop
+      | VLoad num
+      | VLoad8 num
       | VUnknown`;
 
 (*
@@ -42,37 +44,57 @@ val _ = Datatype `
              uses : unit spt ;
              held : unit spt |>`;
 
-
 (*
  * Numbering state.
  * Holds the next value number and all nodes.
  * Also holds a mapping from vars to their assigned numbers.
  *)
 val _ = Datatype `
-  vnumbering = <| vnums : ('a vnumber) spt ;
+  vnumbering = <| globals : ('a vnumber) spt ;
+                  locals : ('a vnumber) spt ;
                   vnodes : ('a vnode) spt ;
+                  memnum : num ;
                   next : num |>`;
 
 val _ = Datatype `
   event = RedunMove
         | Merge
+        | GCPrune
         | Init
         | Unassign
         | Assign 
-        | RedunOp ('a prog)`;
+        | RedunIf
+        | RedunGet ('a prog)
+        | RedunMem ('a prog)
+        | RedunArith ('a prog)`;
 
 val log_event_def = Define `
   (log_event RedunMove = empty_ffi (strlit "redun move")) ∧
   (log_event Merge = empty_ffi (strlit "merge")) ∧
+  (log_event GCPrune = empty_ffi (strlit "gcprune")) ∧
   (log_event Init = empty_ffi (strlit "init")) ∧
-  (log_event Assign = empty_ffi (strlit "assign")) ∧
   (log_event Unassign = empty_ffi (strlit "unassign")) ∧
-  (log_event (RedunOp Skip) = empty_ffi (strlit "redun skip")) ∧
-  (log_event (RedunOp (Inst _)) = empty_ffi (strlit "redun const")) ∧
-  (log_event (RedunOp (Move _ _)) = empty_ffi (strlit "redun copy"))`;
+  (log_event Assign = empty_ffi (strlit "assign")) ∧
+  (log_event RedunIf = empty_ffi (strlit "redun if")) ∧
+
+  (log_event (RedunGet Skip) = empty_ffi (strlit "redun get skip")) ∧
+  (log_event (RedunGet (Inst _)) = empty_ffi (strlit "redun get const")) ∧
+  (log_event (RedunGet (Move _ _)) = empty_ffi (strlit "redun get copy")) ∧
+  (log_event (RedunGet p) = empty_ffi (strlit "redun get unknown")) ∧ 
+
+  (log_event (RedunMem Skip) = empty_ffi (strlit "redun mem skip")) ∧
+  (log_event (RedunMem (Inst _)) = empty_ffi (strlit "redun mem const")) ∧
+  (log_event (RedunMem (Move _ _)) = empty_ffi (strlit "redun mem copy")) ∧
+  (log_event (RedunMem p) = empty_ffi (strlit "redun mem unknown")) ∧
+
+  (log_event (RedunArith Skip) = empty_ffi (strlit "redun skip")) ∧
+  (log_event (RedunArith (Inst _)) = empty_ffi (strlit "redun const")) ∧
+  (log_event (RedunArith (Move _ _)) = empty_ffi (strlit "redun copy")) ∧
+  (log_event (RedunArith p) = empty_ffi (strlit "redun unknown"))`;
 
 val initial_vn_def = Define `
-  initial_vn = <| vnums := LN ; vnodes := LN ; next := 0 |>`;
+  initial_vn =
+    <| globals := LN ; locals := LN ; vnodes := LN ; next := 0 ; memnum := 0 |>`;
 
 (* value node operations *)
 val delete_held_def = Define `
@@ -95,7 +117,7 @@ val insert_use_def = Define `
 
 (* value number operations *)
 val get_num_def = Define `
-  get_num var nums = lookup var nums.vnums`;
+  get_num var nums = lookup var nums.locals`;
 
 val get_nums_def = Define `
   get_nums vars nums = MAP (\v. get_num v nums) vars`;
@@ -105,23 +127,23 @@ val unassign_num_def = Define `
     case get_num var nums of
       | SOME (VN v) =>
           let _ = log_event (Unassign :'a event) in
-          nums with <| vnums updated_by (delete var) ;
+          nums with <| locals updated_by (delete var) ;
                        vnodes updated_by (delete_held var v) |>
       | SOME (VConst w) =>
           let _ = log_event (Unassign :'a event) in
-          nums with vnums updated_by (delete var)
+          nums with locals updated_by (delete var)
       | NONE => nums`;
 
 val assign_num_def = Define `
   (assign_num var (VN v) (nums :'a vnumbering) =
     let _ = log_event (Assign :'a event) in
     (unassign_num var nums) with
-      <| vnums updated_by (insert var (VN v)) ;
+      <| locals updated_by (insert var (VN v)) ;
          vnodes updated_by (insert_held var v) |>) ∧
   (assign_num var (VConst w) nums =
     let _ = log_event (Assign :'a event) in
     (unassign_num var nums) with
-      vnums updated_by (insert var (VConst w)))`;
+      locals updated_by (insert var (VConst w)))`;
 
 val assign_nums_def = Define `
   (assign_nums ((var, NONE)::vns) nums = 
@@ -185,8 +207,9 @@ val fold_def = Define `
   (fold (VLongDiv wide) [w1; w2; w3] =
     let n = w2n w1 * dimword (:'a) + w2n w2 in
     let d = w2n w3 in
+    if d = 0 then NONE else
     let q = n DIV d in
-    if (d = 0 ∨ q >= dimword(:'a)) then NONE else
+    if q >= dimword(:'a) then NONE else
       case wide of
         | High => SOME (n2w (n MOD d))
         | Low => SOME (n2w q)) ∧
@@ -206,9 +229,9 @@ val fold_def = Define `
   (fold label ws = NONE)`;
 
 val attempt_fold_def = Define `
-  attempt_fold label vnums =
+  attempt_fold label nums =
     do
-      cs <- all_const vnums;
+      cs <- all_const nums;
       r <- fold label cs;
       SOME (VConst r)
     od`;
@@ -298,11 +321,7 @@ val gen_wide_prog_def = Define `
 val redun_exp_def = Define `
   redun_exp label dst vns nums =
     case find_exp label vns nums of
-      | SOME vn =>
-          case gen_prog dst vn nums of
-            | SOME nprog => let _ = log_event (RedunOp nprog) in
-                            SOME(SOME nprog, assign_num dst vn nums)
-            | NONE => SOME(NONE, assign_num dst vn nums)
+      | SOME vn => SOME(gen_prog dst vn nums, assign_num dst vn nums)
       | NONE => NONE`
 
 val redun_wide_exp_def = Define `
@@ -316,10 +335,8 @@ val redun_wide_exp_def = Define `
     in
       case dsts of
         | SOME (vn1, vn2) =>
-            case gen_wide_prog dst1 dst2 vn1 vn2 nums of
-              | SOME nprog => let _ = log_event (RedunOp nprog) in
-                              SOME(SOME nprog, assign_num dst2 vn2 (assign_num dst1 vn1 nums))
-              | NONE => SOME(NONE, assign_num dst2 vn2 (assign_num dst1 vn1 nums))
+            SOME(gen_wide_prog dst1 dst2 vn1 vn2 nums,
+            assign_num dst2 vn2 (assign_num dst1 vn1 nums))
         | NONE => NONE`;
  
 (*
@@ -408,7 +425,6 @@ val cse_wide_exp_def = Define `
         | SOME n => n
         | NONE => (NONE,fnums)`;
 
-
 (*
  * arith instructions
  *)
@@ -448,9 +464,11 @@ val cse_fp_def = Define `
  * memory instructions
  *)
 val cse_mem_def = Define `
-  (cse_mem Load r a nums = (NONE, unassign_num r nums)) ∧
-  (cse_mem Load8 r a nums = (NONE, unassign_num r nums)) ∧
-  (cse_mem memop r (a:α addr) (nums :α vnumbering) = (NONE :α prog option, nums))`;
+  (cse_mem Load r1 (Addr r2 w) nums =
+    cse_const_exp (VLoad nums.memnum) r1 [r2] w nums) ∧
+  (cse_mem Load8 r1 (Addr r2 w) nums =
+    cse_const_exp (VLoad8 nums.memnum) r1 [r2] w nums) ∧
+  (cse_mem memop r a nums = (NONE, nums with memnum updated_by SUC))`;
 
 val cse_inst_def = Define `
   (cse_inst Skip nums = (Inst (asm$Skip), nums)) ∧
@@ -458,28 +476,94 @@ val cse_inst_def = Define `
     (Inst (Const dst w), assign_num dst (VConst w) nums)) ∧
   (cse_inst (Arith a) nums =
     let (np,nnums) = cse_arith a nums in
-      ((case np of SOME p => p | NONE => Inst (Arith a)), nnums)) ∧
+      case np of
+        | SOME p => let _ = log_event (RedunArith p) in (p, nnums)
+        | NONE => (Inst (Arith a), nnums)) ∧
   (cse_inst (FP fp) nums =
     let (np,nnums) = cse_fp fp nums in
       ((case np of SOME p => p | NONE => Inst (FP fp)), nnums)) ∧
   (cse_inst (Mem memop r a) nums =
     let (np,nnums) = cse_mem memop r a nums in
-      ((case np of SOME p => p | NONE => Inst (Mem memop r a)), nnums))`;
+      case np of
+        | SOME p => let _ = log_event (RedunMem p) in (p, nnums)
+        | NONE => (Inst (Mem memop r a), nnums))`;
 
 (* logic for merging vnums at a join *)
 (* TODO: actually perform a merge of some sort *)
 (* TODO: Pruning of value graph *)
 val merge_vnums_def = Define `
-  merge_vnums (vnums1 :α vnumbering) (vnums2 :α vnumbering) :α vnumbering =
+  merge_vnums (nums1 :α vnumbering) (nums2 :α vnumbering) :α vnumbering =
     let _ = log_event (Merge :α event) in initial_vn`;
 
+val gc_prune_def = Define `
+  gc_prune (nums :α vnumbering) :α vnumbering = 
+    let _ = log_event (GCPrune :α event) in initial_vn`;
+
+val fold_cmp_def = Define `
+  (fold_cmp cmp lhs (Reg rhs) nums =
+    case (get_num lhs nums, get_num rhs nums) of
+      | SOME (VConst w1), SOME (VConst w2) => SOME (word_cmp cmp w1 w2)
+      | SOME (VN vn1), SOME (VN vn2) =>
+          if vn1 <> vn2 then NONE else
+            (case cmp of
+              | Equal => SOME T
+              | Less => SOME F
+              | Lower => SOME F 
+              | Test => SOME F
+              | NotEqual => SOME F
+              | NotLess => SOME T
+              | NotLower => SOME T 
+              | NotTest => SOME T)
+      | p1, p2 => NONE) ∧
+  (fold_cmp cmp lhs (Imm rhs) nums =
+    case get_num lhs nums of
+      | SOME (VConst w1) => SOME (word_cmp cmp w1 rhs)
+      | p1 => NONE)`;
+
+val name2num_def = Define `
+  (name2num NextFree   = 0) ∧
+  (name2num EndOfHeap  = 1) ∧
+  (name2num TriggerGC  = 2) ∧
+  (name2num HeapLength = 3) ∧
+  (name2num ProgStart  = 4) ∧
+  (name2num BitmapBase = 5) ∧
+  (name2num CurrHeap   = 6) ∧
+  (name2num OtherHeap  = 7) ∧
+  (name2num AllocSize  = 8) ∧
+  (name2num Globals    = 9) ∧
+  (name2num Handler    = 10) ∧
+  (name2num GenStart   = 11) ∧
+  (name2num (Temp w)   = 12 + (w2n w))`;
+
+val cse_get_def = Define `
+  cse_get dst name nums =
+    let
+      en = name2num name;
+    in
+      case lookup en nums.globals of
+        | SOME vn => 
+            (case gen_prog dst vn nums of
+              | SOME p => let _ = log_event (RedunGet p) in (p, assign_num dst vn nums)
+              | NONE => (Get dst name, assign_num dst vn nums))
+        | NONE => (Get dst name, (add_vnode VUnknown dst [] nums) with globals
+        updated_by (insert en (VN nums.next)))`;
+
+val cse_set_def = Define `
+  cse_set name src (nums : α vnumbering) : α prog # α vnumbering =
+    let
+      en = name2num name;
+    in
+      case get_num src nums of
+        | SOME vn => (Set name (Var src), nums with globals updated_by (insert en vn))
+        | NONE => (Set name (Var src), (add_vnode VUnknown src [] nums) with
+        globals updated_by (insert en (VN nums.next)))`;
+
 val cse_loop_def = Define `
-  (* operations updating state *)
+  (* optimised operations *)
   (cse_loop (Move pri moves) nums = cse_move pri moves nums) ∧
-  (cse_loop (Assign dst exp) nums = (Assign dst exp, unassign_num dst nums)) ∧
   (cse_loop (Inst i) nums = cse_inst i nums) ∧
-  (cse_loop (Get dst name) nums = (Get dst name, unassign_num dst nums)) ∧
-  (cse_loop (LocValue dst n) nums = (LocValue dst n, unassign_num dst nums)) ∧
+  (cse_loop (Get dst name) nums = cse_get dst name nums) ∧
+  (cse_loop (Set name (Var src)) nums = cse_set name src nums) ∧ 
 
   (* control flow *)
   (cse_loop (MustTerminate p) nums =
@@ -490,35 +574,42 @@ val cse_loop_def = Define `
       (p2n, nums2) = cse_loop p2 nums1
     in
       (Seq p1n p2n, nums2)) ∧
-  (cse_loop (If cmp lhs rhs p1 p2) nums =
-    let
-      (p1n, nums1) = cse_loop p1 nums;
-      (p2n, nums2) = cse_loop p2 nums;
-    in
-      (If cmp lhs rhs p1n p2n, merge_vnums nums1 nums2)) ∧
+  (cse_loop ((If cmp lhs rhs p1 p2) : 'a prog) (nums : 'a vnumbering) =
+    case fold_cmp cmp lhs rhs nums of
+      | SOME b =>
+          let _ = log_event (RedunIf : 'a event) in
+          if b then cse_loop p1 nums else cse_loop p2 nums
+      | NONE =>
+          let
+            (p1n, nums1) = cse_loop p1 nums;
+            (p2n, nums2) = cse_loop p2 nums;
+          in
+            (If cmp lhs rhs p1n p2n, merge_vnums nums1 nums2)) ∧
 
   (* GC / Calls - reset nums *)
-  (cse_loop (Call ret dest args handler) (nums : 'a vnumbering) =
-    let _ = log_event (Init : 'a event) in
+  (cse_loop (Call ret dest args handler) nums =
     case ret of
-      | NONE => (Call ret dest args handler, initial_vn)
+      | NONE => (Call ret dest args handler, gc_prune nums)
       | SOME (n, names, ret_handler, l1, l2) =>
         (if handler = NONE then
            (let (ret_handlern, _) = cse_loop ret_handler initial_vn in
            (Call (SOME (n, names, ret_handlern, l1, l2)) dest args handler,
-             initial_vn))
+             gc_prune nums))
          else
-           (Call ret dest args handler, initial_vn))) ∧
-  (cse_loop (Alloc n names) (nums : 'a vnumbering) =
-    let _ = log_event (Init : 'a event) in (Alloc n names, initial_vn)) ∧
-  (cse_loop (FFI x0 x1 x2 x3 x4 names) (nums : 'a vnumbering) =
-    let _ = log_event (Init : 'a event) in (FFI x0 x1 x2 x3 x4 names, initial_vn)) ∧
+           (Call ret dest args handler, gc_prune nums))) ∧
+  (cse_loop (Alloc n names) nums = (Alloc n names, gc_prune nums)) ∧
+  (cse_loop (FFI x0 x1 x2 x3 x4 names) nums =
+    (FFI x0 x1 x2 x3 x4 names, gc_prune nums)) ∧
 
   (* other instructions are ignored *)
+  (cse_loop (Assign dst exp) nums = (Assign dst exp, unassign_num dst nums)) ∧
+  (cse_loop (LocValue dst n) nums = (LocValue dst n, unassign_num dst nums)) ∧
+  (cse_loop (Set name exp) nums = (Set name exp, nums)) ∧ 
   (cse_loop (p :'a prog) (nums :'a vnumbering)  =  (p, nums))`;
 
 val cse_def = Define `
   cse (p :'a prog) =
-    let _ = log_event (Init : 'a event) in FST (cse_loop p (initial_vn :'a vnumbering))`;
+    let _ = log_event (Init : 'a event) in
+    FST (cse_loop p (initial_vn :'a vnumbering))`;
 
 val _ = export_theory();
